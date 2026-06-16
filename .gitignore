@@ -1,0 +1,8 @@
+# build artifacts
+asmgrep
+grep.o
+iouring_probe
+
+# scratch A/B checkpoints (gold = mmap build, read = read() build)
+*.gold
+*.read
