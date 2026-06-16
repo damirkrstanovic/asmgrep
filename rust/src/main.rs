@@ -3,9 +3,8 @@
 // file reads, fast SIMD substring search via memchr::memmem.
 use memchr::memmem;
 use rayon::prelude::*;
-use std::borrow::Cow;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use walkdir::WalkDir;
 
@@ -66,43 +65,58 @@ fn main() {
     }
 
     let matched = AtomicBool::new(false);
-    // parallel search (rayon); each file yields its output bytes, order preserved
+    // parallel search (rayon). map_init gives each worker thread *reused* read and
+    // lowercase buffers, so files don't allocate fresh pages on every read.
     let outputs: Vec<Vec<u8>> = files
         .par_iter()
-        .map(|path| {
-            let mut out = Vec::new();
-            let data = match fs::read(path) {
-                Ok(d) => d,
-                Err(_) => return out,
-            };
-            let peek = data.len().min(65536);
-            if memchr::memchr(0, &data[..peek]).is_some() {
-                return out; // binary
-            }
-            let hay: Cow<[u8]> = if ci {
-                Cow::Owned(data.iter().map(|c| c.to_ascii_lowercase()).collect())
-            } else {
-                Cow::Borrowed(&data[..])
-            };
-            let mut pos = 0;
-            while let Some(i) = finder.find(&hay[pos..]) {
-                let m = pos + i;
-                let ls = data[..m].iter().rposition(|&c| c == b'\n').map_or(0, |x| x + 1);
-                let le = memchr::memchr(b'\n', &data[m..]).map_or(data.len(), |x| m + x);
-                matched.store(true, Ordering::Relaxed);
-                if multi {
-                    out.extend_from_slice(path.as_bytes());
-                    out.push(b':');
+        .map_init(
+            || (Vec::<u8>::new(), Vec::<u8>::new()),
+            |(rbuf, lbuf), path| {
+                let mut out = Vec::new();
+                rbuf.clear();
+                let mut f = match fs::File::open(path) {
+                    Ok(f) => f,
+                    Err(_) => return out,
+                };
+                // read a prefix, check binary, read the rest only if not binary
+                // (so a 291MB .git pack is skipped after 64KB, not read in full)
+                if (&mut f).take(65536).read_to_end(rbuf).is_err() {
+                    return out;
                 }
-                out.extend_from_slice(&data[ls..le]);
-                out.push(b'\n');
-                pos = le + 1;
-                if pos > hay.len() {
-                    break;
+                if memchr::memchr(0, rbuf).is_some() {
+                    return out; // binary: rest unread
                 }
-            }
-            out
-        })
+                if rbuf.len() == 65536 && f.read_to_end(rbuf).is_err() {
+                    return out;
+                }
+                let data: &[u8] = rbuf;
+                let hay: &[u8] = if ci {
+                    lbuf.clear();
+                    lbuf.extend(data.iter().map(|c| c.to_ascii_lowercase()));
+                    lbuf
+                } else {
+                    data
+                };
+                let mut pos = 0;
+                while let Some(i) = finder.find(&hay[pos..]) {
+                    let m = pos + i;
+                    let ls = data[..m].iter().rposition(|&c| c == b'\n').map_or(0, |x| x + 1);
+                    let le = memchr::memchr(b'\n', &data[m..]).map_or(data.len(), |x| m + x);
+                    matched.store(true, Ordering::Relaxed);
+                    if multi {
+                        out.extend_from_slice(path.as_bytes());
+                        out.push(b':');
+                    }
+                    out.extend_from_slice(&data[ls..le]);
+                    out.push(b'\n');
+                    pos = le + 1;
+                    if pos > hay.len() {
+                        break;
+                    }
+                }
+                out
+            },
+        )
         .collect();
 
     let stdout = std::io::stdout();

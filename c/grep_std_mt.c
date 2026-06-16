@@ -55,25 +55,34 @@ static int collect_cb(const char *path, const struct stat *sb, int type, struct 
     return 0;
 }
 
-static void search_file(OB *o, const char *path) {
+// rbuf/lbuf are per-thread, grown to the largest file seen and *reused* (never
+// freed between files) so the OS doesn't fault in fresh pages every read.
+static void search_file(OB *o, const char *path, char **rbuf, size_t *rcap, char **lbuf, size_t *lcap) {
     FILE *f = fopen(path, "rb");
     if (!f) return;
     if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return; }
-    long sz = ftell(f);
-    if (sz <= 0) { fclose(f); return; }
+    long szl = ftell(f);
+    if (szl <= 0) { fclose(f); return; }
     rewind(f);
-    char *data = malloc((size_t)sz);
-    if (!data) { fclose(f); return; }
-    size_t rd = fread(data, 1, (size_t)sz, f);
+    size_t sz = (size_t)szl;
+    // read only a prefix first, check for binary, and read the rest *only* if it
+    // isn't binary -- otherwise a 291MB .git pack would be faulted in then skipped.
+    size_t peek = sz < 65536 ? sz : 65536;
+    if (peek > *rcap) { char *nb = realloc(*rbuf, peek); if (!nb) { fclose(f); return; } *rbuf = nb; *rcap = peek; }
+    size_t got = fread(*rbuf, 1, peek, f);
+    if (memchr(*rbuf, 0, got)) { fclose(f); return; }   // binary: skip, rest unread
+    if (sz > got) {
+        if (sz > *rcap) { char *nb = realloc(*rbuf, sz); if (!nb) { fclose(f); return; } *rbuf = nb; *rcap = sz; }
+        while (got < sz) { size_t n = fread(*rbuf + got, 1, sz - got, f); if (n == 0) break; got += n; }
+    }
     fclose(f);
-    size_t peek = rd < 65536 ? rd : 65536;
-    if (memchr(data, 0, peek)) { free(data); return; }
-    const char *hay = data; const char *needle = g_pat; char *low = NULL;
+    size_t rd = got;
+    char *data = *rbuf;
+    const char *hay = data; const char *needle = g_pat;
     if (g_ci) {
-        low = malloc(rd);
-        if (!low) { free(data); return; }
-        for (size_t k = 0; k < rd; k++) low[k] = (char)tolower((unsigned char)data[k]);
-        hay = low; needle = g_lpat;
+        if (rd > *lcap) { char *nl = realloc(*lbuf, rd); if (!nl) return; *lbuf = nl; *lcap = rd; }
+        for (size_t k = 0; k < rd; k++) (*lbuf)[k] = (char)tolower((unsigned char)data[k]);
+        hay = *lbuf; needle = g_lpat;
     }
     size_t pos = 0;
     while (pos < rd) {
@@ -86,16 +95,16 @@ static void search_file(OB *o, const char *path) {
         ob_line(o, path, data + ls, le - ls);
         pos = le + 1;
     }
-    free(low); free(data);
 }
 
 static void *worker(void *arg) {
     (void)arg;
     OB ob; ob.len = 0;
+    char *rbuf = NULL, *lbuf = NULL; size_t rcap = 0, lcap = 0;
     for (;;) {
         size_t i = atomic_fetch_add_explicit(&g_idx, 1, memory_order_relaxed);
         if (i >= g_nfiles) break;
-        search_file(&ob, g_files[i]);
+        search_file(&ob, g_files[i], &rbuf, &rcap, &lbuf, &lcap);
     }
     ob_flush(&ob);
     return NULL;

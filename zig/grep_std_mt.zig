@@ -95,13 +95,34 @@ fn searchData(sh: *Shared, obuf: []u8, olen: *usize, data: []const u8, path: []c
 fn worker(sh: *Shared) void {
     var obuf: [1 << 16]u8 = undefined;
     var olen: usize = 0;
+    // one reused 1 MiB read buffer per thread (read into it; no per-file alloc)
+    const rbuf = sh.gpa.alloc(u8, 1 << 20) catch return;
+    defer sh.gpa.free(rbuf);
     while (true) {
         const i = sh.idx.fetchAdd(1, .monotonic);
         if (i >= g_nfiles) break;
         const path = g_files[i];
-        const data = std.Io.Dir.cwd().readFileAlloc(sh.io, path, sh.gpa, .unlimited) catch continue;
-        defer sh.gpa.free(data);
-        searchData(sh, &obuf, &olen, data, path);
+        if (std.Io.Dir.cwd().readFile(sh.io, path, rbuf)) |data| {
+            // binary check on the prefix BEFORE any full read, so a multi-hundred-MB
+            // .git pack is skipped after 1 MiB instead of being faulted in entirely.
+            const peek = @min(data.len, 65536);
+            if (std.mem.findScalar(u8, data[0..peek], 0) != null) continue;
+            if (data.len == rbuf.len) {
+                // not binary but possibly truncated (file >= 1 MiB): read it fully
+                const full = std.Io.Dir.cwd().readFileAlloc(sh.io, path, sh.gpa, .unlimited) catch {
+                    searchData(sh, &obuf, &olen, data, path);
+                    continue;
+                };
+                searchData(sh, &obuf, &olen, full, path);
+                sh.gpa.free(full);
+            } else {
+                searchData(sh, &obuf, &olen, data, path);
+            }
+        } else |_| {
+            const data = std.Io.Dir.cwd().readFileAlloc(sh.io, path, sh.gpa, .unlimited) catch continue;
+            searchData(sh, &obuf, &olen, data, path);
+            sh.gpa.free(data);
+        }
     }
     flush(sh, &obuf, &olen);
 }

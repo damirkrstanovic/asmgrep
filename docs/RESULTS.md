@@ -87,6 +87,41 @@ otherwise page-fault contention caps you at ~1.5×. You cannot bolt threads onto
 allocation-heavy code and expect linear speedup. And again, **language is irrelevant**:
 idiomatic C ≈ Zig ≈ Go ≈ Rust, all ~9.7×, because they all allocate per file.
 
+### Fixing the memory strategy (and watch them finally scale)
+
+So we changed *only* the memory strategy in the threaded idiomatic versions, keeping
+every other idiom (stdlib walk, stdlib search, native threads): **(a) reuse one buffer
+per thread** instead of allocating per file, and **(b) check binary on a 64 KB prefix
+before reading the rest**. Why (b)? Reuse alone barely moved the needle — investigation
+showed the residual cost was reading immich's **291 MB `.git` pack fully into the buffer
+before the binary check** (the idiomatic "read whole file then search" pattern). That one
+read faults ~71k pages; buffer reuse can't help a single 291 MB read. The optimized
+version never hits this because it `mmap`s large files lazily and only touches the
+binary-check prefix.
+
+| | minor page faults / run (immich) | geomean vs asm |
+|---|--:|--:|
+| naive MT (per-file alloc, full read) | ~80,000 | ~9.7× |
+| **+ buffer reuse + prefix binary-check** | **~2,000–4,000** | **C 3.2× / Zig 2.8× / Go 4.4× / Rust 2.4×** |
+
+`-ri error`, mean ms (reuse + prefix build):
+
+| repo | asm | C·mt | Zig·mt | Go·mt | Rust | grep | rg |
+|---|--:|--:|--:|--:|--:|--:|--:|
+| trustgraph | 2.07 | 6.27 | 5.38 | 9.11 | 5.28 | 12.0 | 5.88 |
+| cognee | 4.23 | 15.1 | 14.0 | 26.8 | 13.0 | 23.8 | 8.02 |
+| jellyfin | 3.65 | 13.5 | 11.0 | 16.6 | 9.12 | 26.8 | 7.71 |
+| immich | 8.99 | 23.2 | 23.4 | 31.7 | 14.8 | 46.9 | 12.5 |
+
+With the memory strategy fixed, the threaded idiomatic versions drop from ~9.7× to
+~2.4–4.4× of the hand-written asm — **now faster than GNU grep (5.7×) and approaching
+ripgrep (2.1×)**, with Rust closest. Two ~3-line changes (reuse + prefix check), no
+algorithm or language change, recovered nearly all of the parallelism the naive
+threading couldn't reach. That is the memory-strategy pillar, isolated.
+
+(Language still barely matters: the C/Zig/Go/Rust spread is ~1.8×; Rust leads, Go trails
+on GC + goroutine overhead.)
+
 ## Does the assembly matter? (C and Zig reimplementations)
 
 The headline question: did *writing it in assembly* buy the speed, or was it the
