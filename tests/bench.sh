@@ -4,7 +4,7 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ASMGREP="$ROOT/asmgrep"
+ASMGREP="$ROOT/bin/asmgrep"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 

@@ -7,7 +7,7 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ASMGREP="$ROOT/asmgrep"
+ASMGREP="$ROOT/bin/asmgrep"
 FIX="$(mktemp -d)"
 trap 'rm -rf "$FIX"' EXIT
 

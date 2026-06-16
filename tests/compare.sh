@@ -16,7 +16,7 @@ set -u
 
 SRC=/home/damirk/src
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ASM="$ROOT/asmgrep"
+ASM="$ROOT/bin/asmgrep"
 GREP=/usr/bin/grep
 RG=/usr/bin/rg
 PAT="${1:-error}"; [ $# -gt 0 ] && shift
