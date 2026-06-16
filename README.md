@@ -6,20 +6,11 @@ substring search with recursion and case-insensitivity — originally written in
 repositories it runs **~3× faster than GNU grep and ~2× faster than ripgrep**
 (geomean, aligned flags), with byte-for-byte identical results.
 
-This repo is also an **experiment**: the same program is reimplemented in **C**
-(`c/grep.c`) and **Zig** (`zig/grep.zig`) with the *same logic* — same syscall
-strategy, same SIMD two-byte filter, same parallel walker, same `read()`-into-buffer.
-The question: *did writing it in assembly actually buy any of the speed?*
-
-**Answer: essentially no.** With the same algorithm, C and Zig land within ~1.01–1.05×
-of the hand-written assembly on real (work-dominated) repos — sometimes faster. And
-going the *other* way (idiomatic stdlib C/Zig/Go/Rust) is **~14× slower** regardless of
-language — and **adding threads to the idiomatic versions only recovers ~1.45×, not 6×**,
-because per-file allocation causes ~100× more page faults that serialize in the kernel
-under threading. So the speed is **engineering, not language**: within a tier all
-languages cluster (≤1.3×); the gap is the *approach* (reused buffers + parallelism that
-can actually scale). Full numbers and the page-fault diagnosis in
-**[docs/RESULTS.md](docs/RESULTS.md)**.
+This repo is also an **experiment**: the same program is reimplemented in **C**,
+**Zig**, **Go**, and **Rust** — both *hand-optimized* (same syscall strategy, SIMD,
+parallel walker) and *idiomatic stdlib*. The question: *did writing it in assembly
+buy any of the speed, or was it the engineering all along?* **Answer below; the
+short version is: it's the engineering, not the language.**
 
 ```
 grep [-r] [-i] PATTERN PATH...
@@ -30,6 +21,52 @@ grep [-r] [-i] PATTERN PATH...
 
 Literal substring only — **no regex** (compare against `grep -F` / `rg -F`).
 Exit status: `0` = match, `1` = no match, `2` = error.
+
+## Findings
+
+All implementations are **byte-for-byte identical to grep** on every repo tested.
+Geomean slowdown vs the hand-written assembly, `-ri error`, 10 repos, 6 cores
+(full numbers + methodology in **[docs/RESULTS.md](docs/RESULTS.md)**):
+
+| implementation | vs asm |
+|---|--:|
+| **optimized** asm / C / Zig (same algorithm + syscall strategy) | 1.0× / ~1.0× / ~1.05× |
+| ripgrep | 2.8× |
+| GNU grep | 4.6× |
+| **idiomatic** single-threaded (C / Zig / Go) | ~14× |
+| **idiomatic** + naive threads (C / Zig / Go / Rust) | ~9.7× |
+| **idiomatic** + threads + reused buffer + prefix binary-check | **C 3.2× / Zig 2.8× / Go 4.4× / Rust 2.4×** |
+
+### 1. The language barely matters
+
+Within a tier, every language clusters: optimized asm ≈ C ≈ Zig; idiomatic
+C ≈ Zig ≈ Go ≈ Rust (≤ ~1.8× apart). The gap *between* tiers is ~14×. Hand-written
+assembly bought **~nothing** on the actual work — a modern compiler matches it and
+the out-of-order CPU does the register allocation/scheduling anyway. Assembly's only
+real edge is no-libc startup on sub-2 ms inputs.
+
+### 2. Performance is three pillars — and they *interact*
+
+1. **Parallelism** (~6× on 6 cores) — *but only if pillar 2 lets it scale.*
+2. **Memory / I-O strategy** — two rules: **(a)** reuse one buffer per thread (don't
+   allocate per file), and **(b)** don't read data you'll skip (check binary on a
+   64 KB *prefix* before reading the rest). Per-file allocation / reading huge files
+   in full causes ~100× more page faults (80k vs ~800 on immich), and faulting fresh
+   pages under N threads serializes on the kernel page-table lock.
+3. **Algorithm** — least important here: stdlib `memmem`/`bytes.Index`/`memchr` are
+   already fast SIMD; the hand-rolled two-byte filter barely helped.
+
+The killer demonstration: bolting threads onto idiomatic code recovered only **1.45×**
+(not 6×) — page-fault contention capped it. Fixing *only* the memory strategy (two
+~3-line changes, no algorithm/language change) took it from 9.7× to ~2.4–4.4×, **past
+grep and approaching ripgrep**. You cannot bolt parallelism onto allocation-heavy code
+and expect it to scale.
+
+### 3. Things measured and *not* shipped
+
+- **io_uring** batched reads: only 1.1–1.3× on warm-cache files → not worth it (see `bench/`).
+- **Boyer-Moore-Horspool**: 4× *slower* than the SIMD scan for short patterns (latency-bound
+  scalar loop) → gated to ≥32-char patterns only.
 
 ## Layout
 
