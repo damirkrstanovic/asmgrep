@@ -12,11 +12,13 @@ strategy, same SIMD two-byte filter, same parallel walker, same `read()`-into-bu
 The question: *did writing it in assembly actually buy any of the speed?*
 
 **Answer: essentially no.** With the same algorithm, C and Zig land within ~1.01–1.05×
-of the hand-written assembly on real (work-dominated) repos — sometimes faster. The
-speed was always the algorithm + syscall strategy, not the language. Assembly's only
-measurable edge is **process startup on tiny inputs** (no libc to initialize), a
-fixed fraction of a millisecond that vanishes once the job is real. Full numbers
-and the (instructive) wrong turns are in **[docs/RESULTS.md](docs/RESULTS.md)**.
+of the hand-written assembly on real (work-dominated) repos — sometimes faster. And
+going the *other* way (idiomatic stdlib C/Zig/Go — `nftw`/`std.Io`/`filepath.WalkDir`,
+single-threaded) is **~14–19× slower** regardless of language. So the speed was always
+the **engineering** — parallelism + I/O strategy — not the language: within a tier all
+languages cluster (≤1.3× apart); between tiers it's ~14×. Assembly's only measurable
+edge is process startup on sub-2 ms inputs. Full numbers in
+**[docs/RESULTS.md](docs/RESULTS.md)**.
 
 ```
 grep [-r] [-i] PATTERN PATH...
@@ -31,14 +33,20 @@ Exit status: `0` = match, `1` = no match, `2` = error.
 ## Layout
 
 ```
-asm/grep.s        the assembly implementation (the original)
-c/grep.c          the C implementation        (same logic)
-zig/grep.zig      the Zig implementation       (same logic)
+asm/grep.s        assembly implementation        (optimized)
+c/grep.c          C, hand-optimized              (same logic as asm)
+zig/grep.zig      Zig, hand-optimized            (same logic as asm)
+c/grep_std.c      C, idiomatic stdlib            (nftw + memmem, single-threaded)
+zig/grep_std.zig  Zig, idiomatic stdlib          (std.Io.Dir + findPos)
+go/grep.go        Go, idiomatic stdlib           (filepath.WalkDir + bytes.Index)
 bench/            iouring_probe.c and friends
 docs/RESULTS.md   full benchmark numbers + methodology
 tests/            run.sh (correctness), compare.sh / bench.sh (perf, hyperfine)
 bin/              build output (git-ignored)
 ```
+
+`make all` builds asm + C; `make c`/`make zig`/`make cstd`/`make zigstd`/`make go`
+build the rest.
 
 ## Build & run
 

@@ -21,6 +21,19 @@ zig: $(BIN)/zgrep
 $(BIN)/zgrep: zig/grep.zig | $(BIN)
 	zig build-exe -O ReleaseFast -femit-bin=$@ $<
 
+# idiomatic / stdlib versions (single-threaded, high-level stdlib)
+cstd: $(BIN)/cgrep_std
+$(BIN)/cgrep_std: c/grep_std.c | $(BIN)
+	$(CC) -O2 -o $@ $<
+
+zigstd: $(BIN)/zgrep_std
+$(BIN)/zgrep_std: zig/grep_std.zig | $(BIN)
+	zig build-exe -O ReleaseFast -femit-bin=$@ $<
+
+go: $(BIN)/gogrep
+$(BIN)/gogrep: go/grep.go go/go.mod | $(BIN)
+	cd go && go build -o ../$(BIN)/gogrep .
+
 $(BIN):
 	mkdir -p $(BIN)
 

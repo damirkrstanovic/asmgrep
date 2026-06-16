@@ -6,6 +6,51 @@ GNU grep and ripgrep across real repositories in `/home/damirk/src`.
 Reproduce: `make test` (correctness), `make bench` (synthetic), `tests/compare.sh` (cross-repo).
 All tools invoked by absolute path to bypass the shell's `grep` wrapper.
 
+## Two tiers: optimized vs idiomatic (and why language barely matters)
+
+Follow-up experiment. We'd argued the speed came from two things: the **algorithm**
+and the **syscall strategy**. To separate "the language" from "the engineering",
+each language got two implementations:
+
+- **optimized** (`asm/grep.s`, `c/grep.c`, `zig/grep.zig`): same hand-tuned design —
+  raw syscalls, `read()` into a reused buffer, SIMD two-byte filter, parallel walker.
+- **idiomatic** (`c/grep_std.c`, `zig/grep_std.zig`, `go/grep.go`): how you'd *normally*
+  write it — high-level stdlib walking (`nftw` / `std.Io.Dir.walk` / `filepath.WalkDir`),
+  whole-file reads (`fread` / `readFileAlloc` / `os.ReadFile`), stdlib substring search
+  (`memmem` / `std.mem.findPos` / `bytes.Index`). Single-threaded.
+
+All eight are byte-for-byte identical to grep. `-ri error`, mean ms, 6 cores:
+
+| repo | asm | C·opt | Zig·opt | C·std | Zig·std | Go | grep | rg |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|
+| navidrome | 2.72 | 3.04 | 3.38 | 30.5 | 32.7 | 46.1 | 15.0 | 7.33 |
+| trustgraph | 1.91 | 2.14 | 2.43 | 53.9 | 48.9 | 58.5 | 12.2 | 5.87 |
+| cognee | 4.07 | 4.01 | 4.01 | 88.9 | 89.0 | 112 | 23.5 | 7.96 |
+| onyx | 4.61 | 4.98 | 5.06 | 110 | 105 | 140 | 26.6 | 9.68 |
+| immich | 8.65 | 7.85 | 8.76 | 196 | 216 | 275 | 46.7 | 12.3 |
+
+**Geomean slowdown vs optimized asm:** idiomatic C **14.5×**, Zig **14.3×**, Go **19.0×**;
+GNU grep 4.6×, ripgrep 2.8×. **Idiomatic languages vs each other: C=1.00, Zig=0.98,
+Go=1.30** — essentially the same.
+
+The takeaways:
+1. **Within each tier, the language is irrelevant.** Optimized asm ≈ C ≈ Zig; idiomatic
+   C ≈ Zig ≈ Go. The spread *between* languages (≤1.3×) is dwarfed by the spread between
+   *tiers* (~14×).
+2. **The ~14× gap is the engineering, not the language** — and it's mostly the two
+   levers we identified: **parallelism (~6× on 6 cores)** and **I/O strategy** (reused
+   buffer + raw `read()` vs per-file allocation + whole-file stdlib reads, ~2.4×).
+3. The custom **matching algorithm barely mattered**: stdlib `memmem`/`findPos`/`bytes.Index`
+   are already fast SIMD scans. Our hand-rolled two-byte SIMD filter was *not* the win —
+   threading and I/O were. (The earlier 2–66× "naive C" disaster was a self-inflicted
+   algorithm bug, not a property of stdlib search.)
+4. "Just use the stdlib" leaves you **~14–19× slower than careful code and 3–4× slower
+   than the grep/ripgrep you were trying to beat** — even in C or Zig. Go trails the
+   others ~1.3× (GC + per-file `os.ReadFile` allocation).
+
+(Idiomatic versions are single-threaded; idiomatic-but-concurrent — e.g. Go with a
+goroutine pool — would recover most of the ~6× parallelism factor.)
+
 ## Does the assembly matter? (C and Zig reimplementations)
 
 The headline question: did *writing it in assembly* buy the speed, or was it the
