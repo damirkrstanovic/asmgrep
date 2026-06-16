@@ -1,6 +1,7 @@
 # build output
 /bin/
 *.o
+/rust/target/
 
 # scratch A/B checkpoints (gold = mmap build, read = read() build)
 *.gold

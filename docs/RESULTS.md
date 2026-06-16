@@ -48,8 +48,44 @@ The takeaways:
    than the grep/ripgrep you were trying to beat** — even in C or Zig. Go trails the
    others ~1.3× (GC + per-file `os.ReadFile` allocation).
 
-(Idiomatic versions are single-threaded; idiomatic-but-concurrent — e.g. Go with a
-goroutine pool — would recover most of the ~6× parallelism factor.)
+### Adding threads to the idiomatic versions (and why it barely helps)
+
+So we parallelized the idiomatic versions with each language's natural concurrency
+(C pthreads, Zig `std.Thread`, Go goroutines) and added **Rust** in its canonical
+idiomatic form — `walkdir` + `rayon` + `memchr` (the crates ripgrep is built from),
+parallel by default. All byte-identical to grep. `-ri error`, mean ms:
+
+| repo | asm | C·mt | Zig·mt | Go·mt | Rust | grep | rg |
+|---|--:|--:|--:|--:|--:|--:|--:|
+| navidrome | 2.72 | 11.0 | 11.1 | 14.8 | 10.7 | 15.0 | 7.88 |
+| trustgraph | 1.98 | 43.6 | 38.8 | 39.1 | 43.4 | 12.0 | 5.45 |
+| cognee | 3.81 | 67.0 | 61.3 | 61.0 | 68.1 | 23.4 | 8.14 |
+| onyx | 4.63 | 77.4 | 67.2 | 73.5 | 73.8 | 26.6 | 9.79 |
+| immich | 8.56 | 150 | 135 | 139 | 153 | 46.9 | 13.4 |
+
+**Geomean vs optimized asm: C·mt 9.7×, Zig·mt 9.4×, Go·mt 9.8×, Rust 9.8×.** Adding
+6 cores only moved idiomatic from ~14× to ~9.7× — a **1.45×** gain, not the ~6× you'd
+expect. They don't scale, and they're *still slower than single-threaded grep*.
+
+**Why: per-file allocation caps parallelism.** Diagnosed on immich (20 runs, no strace):
+
+| | minor page faults / run | parallelism (CPU-time / wall) |
+|---|--:|--:|
+| idiomatic-MT (per-file alloc) | **83,111** | ~1.7× |
+| optimized (reused buffer) | **786** | ~4.7× |
+
+Reading each file into a *fresh* buffer means every buffer's pages must be faulted in
+(zero-page → anonymous page) as they're written — **~100× more minor page faults**. Under
+N threads, the kernel page-fault path contends on the mm/page-table lock (and `munmap`
+adds TLB-shootdown IPIs), so the work **serializes in the kernel** (system time 4.2 s vs
+0.58 s). The optimized versions allocate one buffer **per thread and reuse it**, so pages
+stay resident (~786 faults) and the work actually scales.
+
+**The deepest lesson of the whole experiment:** the pillars *interact*. Parallelism
+(pillar 1) only pays off if the memory strategy (pillar 2) avoids per-file allocation —
+otherwise page-fault contention caps you at ~1.5×. You cannot bolt threads onto
+allocation-heavy code and expect linear speedup. And again, **language is irrelevant**:
+idiomatic C ≈ Zig ≈ Go ≈ Rust, all ~9.7×, because they all allocate per file.
 
 ## Does the assembly matter? (C and Zig reimplementations)
 

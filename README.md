@@ -13,11 +13,12 @@ The question: *did writing it in assembly actually buy any of the speed?*
 
 **Answer: essentially no.** With the same algorithm, C and Zig land within ~1.01–1.05×
 of the hand-written assembly on real (work-dominated) repos — sometimes faster. And
-going the *other* way (idiomatic stdlib C/Zig/Go — `nftw`/`std.Io`/`filepath.WalkDir`,
-single-threaded) is **~14–19× slower** regardless of language. So the speed was always
-the **engineering** — parallelism + I/O strategy — not the language: within a tier all
-languages cluster (≤1.3× apart); between tiers it's ~14×. Assembly's only measurable
-edge is process startup on sub-2 ms inputs. Full numbers in
+going the *other* way (idiomatic stdlib C/Zig/Go/Rust) is **~14× slower** regardless of
+language — and **adding threads to the idiomatic versions only recovers ~1.45×, not 6×**,
+because per-file allocation causes ~100× more page faults that serialize in the kernel
+under threading. So the speed is **engineering, not language**: within a tier all
+languages cluster (≤1.3×); the gap is the *approach* (reused buffers + parallelism that
+can actually scale). Full numbers and the page-fault diagnosis in
 **[docs/RESULTS.md](docs/RESULTS.md)**.
 
 ```
@@ -39,6 +40,10 @@ zig/grep.zig      Zig, hand-optimized            (same logic as asm)
 c/grep_std.c      C, idiomatic stdlib            (nftw + memmem, single-threaded)
 zig/grep_std.zig  Zig, idiomatic stdlib          (std.Io.Dir + findPos)
 go/grep.go        Go, idiomatic stdlib           (filepath.WalkDir + bytes.Index)
+c/grep_std_mt.c   C, idiomatic + pthreads        (multithreaded)
+zig/grep_std_mt.zig  Zig, idiomatic + std.Thread (multithreaded)
+go/mt/main.go     Go, idiomatic + goroutines     (multithreaded)
+rust/             Rust, idiomatic walkdir+rayon+memchr (parallel; ripgrep's crates)
 bench/            iouring_probe.c and friends
 docs/RESULTS.md   full benchmark numbers + methodology
 tests/            run.sh (correctness), compare.sh / bench.sh (perf, hyperfine)

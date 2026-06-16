@@ -34,6 +34,23 @@ go: $(BIN)/gogrep
 $(BIN)/gogrep: go/grep.go go/go.mod | $(BIN)
 	cd go && go build -o ../$(BIN)/gogrep .
 
+# multithreaded idiomatic variants + Rust
+cstdmt: $(BIN)/cgrep_std_mt
+$(BIN)/cgrep_std_mt: c/grep_std_mt.c | $(BIN)
+	$(CC) -O2 -pthread -o $@ $<
+
+zigstdmt: $(BIN)/zgrep_std_mt
+$(BIN)/zgrep_std_mt: zig/grep_std_mt.zig | $(BIN)
+	zig build-exe -O ReleaseFast -femit-bin=$@ $<
+
+gomt: $(BIN)/gogrep_mt
+$(BIN)/gogrep_mt: go/mt/main.go go/go.mod | $(BIN)
+	cd go && go build -o ../$(BIN)/gogrep_mt ./mt
+
+rust: $(BIN)/rustgrep
+$(BIN)/rustgrep: rust/src/main.rs rust/Cargo.toml | $(BIN)
+	cd rust && cargo build --release --offline && cp target/release/rustgrep ../$(BIN)/rustgrep
+
 $(BIN):
 	mkdir -p $(BIN)
 
