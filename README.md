@@ -6,11 +6,17 @@ substring search with recursion and case-insensitivity — originally written in
 repositories it runs **~3× faster than GNU grep and ~2× faster than ripgrep**
 (geomean, aligned flags), with byte-for-byte identical results.
 
-This repo is now also an **experiment**: the same program is being reimplemented
-in **C** and **Zig** with the *same logic* (same syscall strategy, same parallel
-walker, same `read()`-into-buffer approach) to test a hypothesis — *did writing
-it in assembly actually buy any of the speed, or was it the algorithm and syscall
-strategy all along?* See **[docs/RESULTS.md](docs/RESULTS.md)**.
+This repo is also an **experiment**: the same program is reimplemented in **C**
+(`c/grep.c`) and **Zig** (`zig/grep.zig`) with the *same logic* — same syscall
+strategy, same SIMD two-byte filter, same parallel walker, same `read()`-into-buffer.
+The question: *did writing it in assembly actually buy any of the speed?*
+
+**Answer: essentially no.** With the same algorithm, C and Zig land within ~1.01–1.05×
+of the hand-written assembly on real (work-dominated) repos — sometimes faster. The
+speed was always the algorithm + syscall strategy, not the language. Assembly's only
+measurable edge is **process startup on tiny inputs** (no libc to initialize), a
+fixed fraction of a millisecond that vanishes once the job is real. Full numbers
+and the (instructive) wrong turns are in **[docs/RESULTS.md](docs/RESULTS.md)**.
 
 ```
 grep [-r] [-i] PATTERN PATH...

@@ -6,6 +6,47 @@ GNU grep and ripgrep across real repositories in `/home/damirk/src`.
 Reproduce: `make test` (correctness), `make bench` (synthetic), `tests/compare.sh` (cross-repo).
 All tools invoked by absolute path to bypass the shell's `grep` wrapper.
 
+## Does the assembly matter? (C and Zig reimplementations)
+
+The headline question: did *writing it in assembly* buy the speed, or was it the
+algorithm + syscall strategy all along? To find out, the exact same program was
+reimplemented in **C** (`c/grep.c`, gcc `-O2 -march=native`, AVX2 intrinsics,
+pthreads) and **Zig** (`zig/grep.zig`, `-O ReleaseFast`, `@Vector(32,u8)`,
+`std.Thread`, raw `std.os.linux` syscalls) — same algorithm, same SIMD two-byte
+filter, same `read()`-into-buffer, same parallel walker. All three are byte-for-byte
+identical to `grep` on every repo.
+
+`-ri error`, mean ms, 6 cores:
+
+| repo | asm | C | Zig | grep | rg |
+|---|--:|--:|--:|--:|--:|
+| archy | 0.61 | 1.13 | 1.49 | 1.64 | 3.82 |
+| linuxutil | 1.00 | 1.62 | 1.66 | 1.96 | 3.81 |
+| navidrome | 3.91 | 3.97 | 4.42 | 17.1 | 8.71 |
+| trustgraph | 2.60 | 2.80 | 2.84 | 13.6 | 6.75 |
+| cognee | 5.88 | 5.14 | 6.29 | 27.1 | 8.88 |
+| onyx | 6.90 | 6.20 | 6.40 | 29.5 | 11.9 |
+| jellyfin | 5.34 | 5.90 | 5.32 | 30.8 | 8.66 |
+| immich | 12.2 | 11.5 | 11.7 | 54.3 | 14.2 |
+
+**Geomean vs asm: C = 1.14×, Zig = 1.23× over 10 repos — but on the big
+(work-dominated) repos, C = 1.01× and Zig = 1.05×, i.e. identical.** On several
+large repos C and Zig are *faster* than the hand asm (cognee, onyx, immich).
+
+**Conclusion: the assembly bought essentially nothing for the actual grep work.**
+The speed came from the algorithm and syscall strategy, which are
+language-independent; a modern optimizing compiler (gcc/zig) produces machine code
+as good as hand asm for these hot loops, and the CPU does the register
+allocation/scheduling dynamically anyway. The *only* place asm wins is **process
+startup on tiny inputs** (archy/linuxutil, sub-2 ms): with no libc/runtime to
+initialize and a lazy thread-spawn gate, asm starts in ~0 while C/Zig pay
+libc + pthread setup — a fixed ~0.3–0.5 ms that's invisible once the job is real.
+
+A cautionary data point from the build process: a *naive* C version (using
+`memchr` per pivot occurrence instead of the continuous SIMD two-byte scan) was
+**2–66× slower** on `r`-dense files (cognee, gaia). That gap was the *algorithm*,
+not the language — which is the whole point.
+
 ## Optimizations implemented
 
 | technique | effect |
