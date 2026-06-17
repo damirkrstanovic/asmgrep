@@ -51,6 +51,121 @@ rust: $(BIN)/rustgrep
 $(BIN)/rustgrep: rust/src/main.rs rust/Cargo.toml | $(BIN)
 	cd rust && cargo build --release --offline && cp target/release/rustgrep ../$(BIN)/rustgrep
 
+# Odin: native compiler (LLVM) -> native binaries, like C/Zig (no runtime/launcher).
+odin: $(BIN)/odingrep_std $(BIN)/odingrep_std_mt $(BIN)/odingrep_std_mt_tuned
+$(BIN)/odingrep_std: odin/grep_std.odin | $(BIN)
+	odin build odin/grep_std.odin -file -o:speed -out:$@
+$(BIN)/odingrep_std_mt: odin/grep_mt.odin | $(BIN)
+	odin build odin/grep_mt.odin -file -o:speed -out:$@
+$(BIN)/odingrep_std_mt_tuned: odin/grep_mt_tuned.odin | $(BIN)
+	odin build odin/grep_mt_tuned.odin -file -o:speed -out:$@
+
+# Haskell: GHC -> native binary, but with a managed runtime (GC + threaded RTS).
+# MT variants link -threaded and default to all cores via -with-rtsopts=-N.
+# -dynamic: this GHC install ships shared libs only (no static .a archives).
+haskell: $(BIN)/haskgrep_std $(BIN)/haskgrep_std_mt $(BIN)/haskgrep_std_mt_tuned
+$(BIN)/haskgrep_std: haskell/grep_std.hs | $(BIN)
+	ghc -O2 -dynamic -outputdir haskell/build haskell/grep_std.hs -o $@
+$(BIN)/haskgrep_std_mt: haskell/grep_mt.hs | $(BIN)
+	ghc -O2 -threaded -rtsopts -with-rtsopts=-N -dynamic -outputdir haskell/build haskell/grep_mt.hs -o $@
+$(BIN)/haskgrep_std_mt_tuned: haskell/grep_mt_tuned.hs | $(BIN)
+	ghc -O2 -threaded -rtsopts -with-rtsopts=-N -dynamic -outputdir haskell/build haskell/grep_mt_tuned.hs -o $@
+
+# OCaml: native ocamlopt via an opam flambda switch (so -O3's inlining is live;
+# the stock/system compiler is non-flambda and -O3 would be a no-op there). Build
+# with `make ocaml` after `opam switch create flambda ... ocaml-option-flambda`.
+# OCaml 5 Domains give real parallelism. ocamlopt drops .cmi/.cmx/.o next to the
+# source, so each rule cleans them after linking.
+OCAMLOPT := opam exec --switch=flambda -- ocamlopt -O3 -I +unix unix.cmxa
+ocaml: $(BIN)/ocgrep_std $(BIN)/ocgrep_std_mt $(BIN)/ocgrep_std_mt_tuned
+$(BIN)/ocgrep_std: ocaml/grep_std.ml | $(BIN)
+	$(OCAMLOPT) ocaml/grep_std.ml -o $@ && rm -f ocaml/*.cmi ocaml/*.cmx ocaml/*.o
+$(BIN)/ocgrep_std_mt: ocaml/grep_mt.ml | $(BIN)
+	$(OCAMLOPT) ocaml/grep_mt.ml -o $@ && rm -f ocaml/*.cmi ocaml/*.cmx ocaml/*.o
+$(BIN)/ocgrep_std_mt_tuned: ocaml/grep_mt_tuned.ml | $(BIN)
+	$(OCAMLOPT) ocaml/grep_mt_tuned.ml -o $@ && rm -f ocaml/*.cmi ocaml/*.cmx ocaml/*.o
+
+# Free Pascal: fpc native binaries (-FU sends unit intermediates to a build dir).
+pascal: $(BIN)/fpgrep_std $(BIN)/fpgrep_std_mt $(BIN)/fpgrep_std_mt_tuned
+$(BIN)/fpgrep_std: pascal/grep_std.pas | $(BIN)
+	fpc -O3 -FU pascal/build -o$@ pascal/grep_std.pas
+$(BIN)/fpgrep_std_mt: pascal/grep_mt.pas | $(BIN)
+	fpc -O3 -FU pascal/build -o$@ pascal/grep_mt.pas
+$(BIN)/fpgrep_std_mt_tuned: pascal/grep_mt_tuned.pas | $(BIN)
+	fpc -O3 -FU pascal/build -o$@ pascal/grep_mt_tuned.pas
+
+# Ada: GNAT native (tasks for parallelism, protected objects for mutex/atomic).
+ada: $(BIN)/adagrep_std $(BIN)/adagrep_std_mt $(BIN)/adagrep_std_mt_tuned
+$(BIN)/adagrep_std: ada/grep_std.adb | $(BIN)
+	mkdir -p ada/build && gnatmake -O2 -D ada/build -o $@ ada/grep_std.adb
+$(BIN)/adagrep_std_mt: ada/grep_mt.adb | $(BIN)
+	mkdir -p ada/build && gnatmake -O2 -D ada/build -o $@ ada/grep_mt.adb
+$(BIN)/adagrep_std_mt_tuned: ada/grep_mt_tuned.adb | $(BIN)
+	mkdir -p ada/build && gnatmake -O2 -D ada/build -o $@ ada/grep_mt_tuned.adb
+
+# Fortran: gfortran native; -fopenmp for the MT variants; recursive walk via
+# iso_c_binding (opendir/readdir/lstat). Each file defines same-named modules
+# (posix_walk/grep_core), so each gets its OWN -J dir or a parallel `make`
+# would clobber shared .mod files.
+fortran: $(BIN)/fortgrep_std $(BIN)/fortgrep_std_mt $(BIN)/fortgrep_std_mt_tuned
+$(BIN)/fortgrep_std: fortran/grep_std.f90 | $(BIN)
+	mkdir -p fortran/build/std && gfortran -O2 -J fortran/build/std fortran/grep_std.f90 -o $@
+$(BIN)/fortgrep_std_mt: fortran/grep_mt.f90 | $(BIN)
+	mkdir -p fortran/build/mt && gfortran -O2 -fopenmp -J fortran/build/mt fortran/grep_mt.f90 -o $@
+$(BIN)/fortgrep_std_mt_tuned: fortran/grep_mt_tuned.f90 | $(BIN)
+	mkdir -p fortran/build/tuned && gfortran -O2 -fopenmp -J fortran/build/tuned fortran/grep_mt_tuned.f90 -o $@
+
+# ----------------------------------------------------------------------------
+# Hosted / JVM languages: compile to bytecode, run via `java`. A tiny launcher
+# script is (re)generated into bin/ (which is git-ignored) by each rule.
+# These add a new axis to the experiment: JVM startup + JIT warmup on a
+# short-lived process. Three variants each (idiomatic / +threads / +tuned).
+# ----------------------------------------------------------------------------
+
+# Java (JDK) -> plain .class + `java -cp`
+java: $(BIN)/jgrep_std
+$(BIN)/jgrep_std: java/GrepStd.java java/GrepMt.java java/GrepMtTuned.java | $(BIN)
+	javac -d java $^
+	printf '#!/bin/sh\nexec java -cp $(CURDIR)/java GrepStd "$$@"\n'      > $(BIN)/jgrep_std
+	printf '#!/bin/sh\nexec java -cp $(CURDIR)/java GrepMt "$$@"\n'       > $(BIN)/jgrep_std_mt
+	printf '#!/bin/sh\nexec java -cp $(CURDIR)/java GrepMtTuned "$$@"\n'  > $(BIN)/jgrep_std_mt_tuned
+	chmod +x $(BIN)/jgrep_std $(BIN)/jgrep_std_mt $(BIN)/jgrep_std_mt_tuned
+
+# Kotlin -> -include-runtime fat jar + bare `java -jar`. NOTE: launched with the
+# SAME bare `java` as the Java and Clojure targets — no per-language -XX tuning —
+# so the three JVM rows are measured under identical runtime conditions (fairness).
+KTJAVA := java -jar
+kotlin: $(BIN)/ktgrep_std
+$(BIN)/ktgrep_std: kotlin/grep_std.kt kotlin/grep_mt.kt kotlin/grep_mt_tuned.kt | $(BIN)
+	kotlinc kotlin/grep_std.kt      -include-runtime -d kotlin/grep_std.jar
+	kotlinc kotlin/grep_mt.kt       -include-runtime -d kotlin/grep_mt.jar
+	kotlinc kotlin/grep_mt_tuned.kt -include-runtime -d kotlin/grep_mt_tuned.jar
+	printf '#!/bin/sh\nexec $(KTJAVA) $(CURDIR)/kotlin/grep_std.jar "$$@"\n'      > $(BIN)/ktgrep_std
+	printf '#!/bin/sh\nexec $(KTJAVA) $(CURDIR)/kotlin/grep_mt.jar "$$@"\n'       > $(BIN)/ktgrep_std_mt
+	printf '#!/bin/sh\nexec $(KTJAVA) $(CURDIR)/kotlin/grep_mt_tuned.jar "$$@"\n' > $(BIN)/ktgrep_std_mt_tuned
+	chmod +x $(BIN)/ktgrep_std $(BIN)/ktgrep_std_mt $(BIN)/ktgrep_std_mt_tuned
+
+# Clojure -> AOT'd uberjars via Leiningen (offline) + `java -jar`
+clojure: $(BIN)/cljgrep_std
+$(BIN)/cljgrep_std: clojure/src/cljgrep/grepstd.clj clojure/src/cljgrep/grepmt.clj clojure/src/cljgrep/grepmttuned.clj clojure/project.clj | $(BIN)
+	cd clojure && lein with-profile std uberjar && lein with-profile mt uberjar && lein with-profile mttuned uberjar
+	printf '#!/bin/sh\nexec java -jar $(CURDIR)/clojure/target/cljgrep_std.jar "$$@"\n'          > $(BIN)/cljgrep_std
+	printf '#!/bin/sh\nexec java -jar $(CURDIR)/clojure/target/cljgrep_std_mt.jar "$$@"\n'       > $(BIN)/cljgrep_std_mt
+	printf '#!/bin/sh\nexec java -jar $(CURDIR)/clojure/target/cljgrep_std_mt_tuned.jar "$$@"\n' > $(BIN)/cljgrep_std_mt_tuned
+	chmod +x $(BIN)/cljgrep_std $(BIN)/cljgrep_std_mt $(BIN)/cljgrep_std_mt_tuned
+
+jvm: java kotlin clojure
+
+# Common Lisp (SBCL): save-lisp-and-die -> standalone native executables
+# (~4 ms startup; full runtime embedded, so binaries are large).
+lisp: $(BIN)/clgrep_std $(BIN)/clgrep_std_mt $(BIN)/clgrep_std_mt_tuned
+$(BIN)/clgrep_std: lisp/grep_std.lisp lisp/build_std.lisp | $(BIN)
+	sbcl --non-interactive --load lisp/build_std.lisp
+$(BIN)/clgrep_std_mt: lisp/grep_mt.lisp lisp/build_mt.lisp | $(BIN)
+	sbcl --non-interactive --load lisp/build_mt.lisp
+$(BIN)/clgrep_std_mt_tuned: lisp/grep_mt_tuned.lisp lisp/build_mt_tuned.lisp | $(BIN)
+	sbcl --non-interactive --load lisp/build_mt_tuned.lisp
+
 $(BIN):
 	mkdir -p $(BIN)
 
@@ -64,4 +179,4 @@ compare: all
 clean:
 	rm -rf $(BIN)
 
-.PHONY: all asm c zig test bench compare clean
+.PHONY: all asm c zig test bench compare clean java kotlin clojure jvm odin lisp haskell ocaml pascal ada fortran

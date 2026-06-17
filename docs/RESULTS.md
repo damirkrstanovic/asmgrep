@@ -163,6 +163,173 @@ A cautionary data point from the build process: a *naive* C version (using
 **2–66× slower** on `r`-dense files (cognee, gaia). That gap was the *algorithm*,
 not the language — which is the whole point.
 
+## Ten more languages: managed runtimes + seven more compiled (2026-06-17)
+
+Extending the thesis past the systems-language cluster. Ten additions, each in the
+same three tiers (idiomatic single-threaded / +naive threads / +reused-buffer+prefix-check):
+
+- **Odin** (`odin/`, native, LLVM backend), **OCaml** (`ocaml/`, `ocamlopt` native, OCaml-5
+  Domains), **FreePascal** (`pascal/`, `fpc` native), **Haskell** (`haskell/`, GHC native +
+  threaded RTS), **Ada** (`ada/`, GNAT native, tasks + protected objects), **Fortran**
+  (`fortran/`, gfortran native, OpenMP; recursive walk via `iso_c_binding` opendir/readdir/lstat)
+  — *compiled* languages, expected to land near C/Zig.
+- **Java** (`java/`, JDK 26, plain `.class`), **Kotlin** (`kotlin/`, fat jar), **Clojure**
+  (`clojure/`, AOT'd uberjar) — JVM **managed runtimes**: startup + JIT warmup on a
+  short-lived process is a new axis the C/Zig/Go/Rust lineup couldn't show.
+- **Common Lisp** (`lisp/`, SBCL `save-lisp-and-die` → native image) — a dynamic language
+  that nonetheless compiles to native code and ships as a standalone executable.
+
+All 30 are byte-for-byte identical to `grep` (`tests/verify_impl.sh`, 16 cases each = 480/480).
+*Methodology note:* the three tables below were **re-measured in one consistent pass on an
+idle machine** (2026-06-18, 1-min load < 1) — a single `hyperfine` invocation per tier so
+every row, baselines included, sees the same machine state and the same current corpus
+(startup on `README.md`; scans on navidrome 29M / immich 420M; `-M 30/10/6`). Two fairness
+fixes are folded in: **all three JVM languages launch under identical bare `java`** (no
+per-language `-XX` tuning — an earlier cut gave Kotlin `-XX:+UseSerialGC -XX:TieredStopAtLevel=1`,
+which flattered it; removing it is why Kotlin·tuned jumped 103→249 ms), and **OCaml is built
+with an opam flambda switch + `-O3`** (the stock compiler is non-flambda, where `-O3` is a
+no-op). These are newer than the multi-repo geomean tables higher up and use a different
+corpus snapshot, so don't cross-compare the two; within each table below the numbers are
+directly comparable.
+
+### Startup tax — search one small file (`README.md`, pattern `the`, 20 runs)
+
+This is the whole story for managed runtimes on small jobs:
+
+| impl | mean ms | vs asm |
+|---|--:|--:|
+| asmgrep | 0.20 | 1.0× |
+| **FreePascal·std** | 0.41 | 2.1× |
+| C·std | 0.49 | 2.5× |
+| **Odin·std** | 0.59 | 2.9× |
+| **Ada·std** | 0.60 | 3.0× |
+| **Fortran·std** | 0.80 | 4.0× |
+| Rust | 0.85 | 4.2× |
+| **OCaml·std** (flambda) | 1.02 | 5.1× |
+| Go | 1.05 | 5.2× |
+| **Common Lisp·std (SBCL)** | 3.35 | 17× |
+| **Haskell·std (GHC)** | 16.1 | 81× |
+| **Java·std** | 30.5 | 152× |
+| **Kotlin·std** | 41.2 | 206× |
+| **Clojure·std** | 438 | 2189× |
+
+**Odin starts like a native binary** (sub-ms, in the C/Zig band). The surprise is
+**SBCL: ~3.4 ms** — 10× faster to start than the JVM, because a saved Lisp image is a
+*native executable*, not a VM bootstrapping its runtime + classloader + JIT. The JVM
+trio pays ~30–40 ms of fixed launch before touching a byte; **Clojure adds ~0.45 s of
+runtime init** (interning `clojure.core` etc.) even fully AOT-compiled.
+
+### Idiomatic single-threaded scan — `-ri error navidrome` (29M, 8 runs)
+
+| impl | mean ms | vs best |
+|---|--:|--:|
+| grep | 15.3 | 1.0× |
+| C·std | 31.0 | 2.0× |
+| Zig·std | 33.4 | 2.2× |
+| Go | 47.1 | 3.1× |
+| **Odin·std** | 53.6 | 3.5× |
+| **Fortran·std** | 54.5 | 3.6× |
+| **FreePascal·std** | 68.1 | 4.5× |
+| **Common Lisp·std** | 82.2 | 5.4× |
+| **OCaml·std** (flambda) | 88.6 | 5.8× |
+| **Haskell·std** | 97.4 | 6.4× |
+| **Ada·std** | 115 | 7.5× |
+| **Java·std** | 191 | 12.5× |
+| **Kotlin·std** | 201 | 13.2× |
+| **Clojure·std** | 601 | 39× |
+
+Idiomatic **Odin sits right in the C/Zig/Go idiomatic cluster** (~2–3.5×) — confirming
+"within the compiled tier the language is irrelevant" now extends to Odin. SBCL is a tier
+back but respectable for a dynamic language. The JVM trio is still launch/warmup-bound here:
+the job finishes (~tens of ms of actual work) before the JIT compiles the hot loop.
+
+(**Rust** has no single-threaded entry: the implementation here is `walkdir`+`rayon`+`memchr`,
+*parallel by default* — it only fits the tuned-MT table below, where it leads the idiomatic
+field at 6.9 ms / navidrome, 15.1 ms / immich.)
+
+### Tuned-MT scan (reused buffer + prefix binary-check), with baselines
+
+`-ri error`, mean ms:
+
+| impl | navidrome 29M | immich 420M |
+|---|--:|--:|
+| asmgrep | 3.0 | 7.9 |
+| Rust·mt | 7.0 | 15.0 |
+| Zig·mt | 7.9 | 22.5 |
+| ripgrep | 8.2 | 12.3 |
+| C·mt | 9.2 | 22.8 |
+| Go·mt | 10.8 | 29.8 |
+| GNU grep | 15.4 | 47.8 |
+| **Fortran·tuned** | 20.4 | 47.4 |
+| **Common Lisp·tuned** | 23.1 | 54.1 |
+| **OCaml·tuned** (flambda) | 23.5 | 64.8 |
+| **Odin·tuned** | 30.7 | 135 |
+| **Ada·tuned** | 33.5 | 97.8 |
+| **FreePascal·tuned** | 39.2 | 118 |
+| **Haskell·tuned** | 67.8 | 172 |
+| **Kotlin·tuned** | 249 | 413 |
+| **Java·tuned** | 277 | 325 |
+| **Clojure·tuned** | 578 | 625 |
+
+Two findings here:
+
+1. **Native-image SBCL is genuinely competitive** — tuned-MT Common Lisp lands 23/54 ms,
+   within ~1.2–1.5× of GNU grep (and Fortran's `index()`-backed tuned variant actually *ties*
+   grep: 20.4/47.4 ms vs 15.4/47.8 ms). A *dynamic* language with real threads (`sb-thread`)
+   and a native saved image performing in the same class as grep is the surprise of the batch.
+2. **Parallelism cannot rescue a startup-bound runtime.** For the JVM the tuned-MT variant is
+   *worse than its single-threaded variant* on these jobs — Java 277 vs 191 ms, Kotlin 249 vs
+   201 ms (navidrome). Adding threads to a job that finishes before the JIT warms up just buys
+   you thread-pool spin-up + extra GC/JIT-compiler threads competing for the same short window,
+   on top of per-file object/syscall overhead (worst on file-count-heavy immich). You can't bolt
+   threads onto a 30–440 ms fixed launch cost. (This is also why the bare-`java` fix matters:
+   Kotlin's earlier `-XX:+UseSerialGC -XX:TieredStopAtLevel=1` *suppressed* exactly those extra
+   threads, halving its tuned time to 103 ms and masking the effect — the fair number is 249 ms.)
+   Odin·tuned also scaled poorly (1.7×, not 6×): its idiomatic walker/threading does more
+   per-file work than the C/Zig tuned versions.
+3. **Haskell can't *do* the memory pillar — by language design.** It's natively compiled (GHC)
+   with a fast-ish startup (~16 ms, between SBCL's native image and the JVM), but its scan is
+   slow (~97 ms single-threaded / navidrome) and barely scales under the threaded RTS
+   (~1.4×, 97→68 ms). The reason ties straight back to pillar 2: `ByteString` is **immutable**,
+   so the per-thread reused-buffer optimization is unidiomatic and unsafe (a `Builder` from one
+   file would alias the buffer the next `hGetBuf` overwrites). The tuned variant could only ship
+   the prefix-check, not buffer reuse — so Haskell is structurally pinned in the allocation-heavy
+   regime that caps the other idiomatic versions at ~1.5× threading. Immutability is a real
+   ergonomic and correctness win that costs you exactly the lever this experiment found matters most.
+4. **OCaml and FreePascal: native startup, *can* do the memory pillar — but pay an algorithm tax.**
+   Both compile to native (FreePascal startup **0.41 ms** ≈ C, OCaml 1.02 ms), and both have
+   *mutable* buffers (`Bytes` / dynamic arrays), so the tuned variant does genuine per-worker
+   buffer reuse and actually scales (OCaml 89→24 ms, ~3.8× on Domains; FreePascal 68→39 ms).
+   But their idiomatic single-threaded scan is *slow* (~68–89 ms / navidrome, slower than Go/Odin)
+   for one reason: **neither stdlib ships a substring search**, so both hand-roll a scalar
+   byte loop — no SIMD `memmem`/`bytes.Index`. **The flambda experiment nails this down:** building
+   OCaml with a flambda switch + `-O3` (aggressive inlining) bought only ~9% on the scan (97→89 ms
+   vs the stock non-flambda compiler) — proving the cost is the *scalar algorithm*, not missing
+   compiler optimization. The gap is the **algorithm**, not the language, the same lesson as the
+   original "naive C" blowup. (OCaml's `Domain`-based parallelism is the clean OCaml-5 story;
+   FreePascal needed `BeginThread` instead of `TThread.WaitFor`,
+   whose join spins a fixed ~100 ms futex timeout — a 100 ms floor on every threaded run until fixed.)
+5. **Ada and Fortran round out the native tier — and Fortran's `index()` proves the algorithm point.**
+   Both compile native with sub-ms startup (Ada **0.60 ms**, Fortran 0.80 ms) and both do real
+   buffer reuse (Ada per-task `Worker_State` records on tasks + protected objects; Fortran
+   per-thread `worker_t` slots under OpenMP), so both scale on the tuned tier (Ada 115→34 ms, ~3.5×;
+   Fortran 55→20 ms, now the fastest new language and tied with grep).
+   The instructive split is single-threaded: **Ada 115 ms vs Fortran 55 ms**. Ada hand-rolls a
+   scalar `Byte_Index` (like OCaml/FreePascal); **Fortran uses its built-in `index()` intrinsic**,
+   a real substring search, and is ~2× faster for it. Same native backend (both GCC) — the only
+   difference is *whether the stdlib handed you a fast search*, the algorithm pillar one more time.
+   (Fortran has no standard directory API, so the recursive walk is hand-bound POSIX
+   `opendir`/`readdir`/`lstat` via `iso_c_binding` — a reminder that "idiomatic" varies wildly:
+   in Go the walk is one stdlib call, in Fortran it's ~60 lines of C-struct-offset interop.)
+
+**Refined thesis.** "The language barely matters" holds *within the natively-compiled tier*
+— asm ≈ C ≈ Zig ≈ Odin, and even SBCL via a native image is close. It **breaks for managed
+runtimes on short-lived CLI work**: there the *runtime model* (AOT native image vs a
+bootstrapping VM) dominates the algorithm and even the parallelism pillar. For a grep — a
+process that launches, scans, and exits in milliseconds — JVM startup is a structural floor
+no in-program engineering removes, and Clojure's runtime-init constant puts it in a class of
+its own (~0.5 s before any repo is large enough to amortize it).
+
 ## Optimizations implemented
 
 | technique | effect |

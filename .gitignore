@@ -2,6 +2,29 @@
 /bin/
 *.o
 /rust/target/
+# JVM build artifacts (sources tracked; bytecode/jars are regenerable)
+/java/*.class
+/kotlin/*.jar
+/clojure/target/
+# Lisp / SBCL fasl caches (executables land in bin/)
+*.fasl
+# Haskell / GHC intermediates (binaries land in bin/)
+/haskell/build/
+*.hi
+# OCaml native-compile intermediates (binaries land in bin/)
+/ocaml/build/
+*.cmi
+*.cmx
+*.cmo
+# Free Pascal unit intermediates (binaries land in bin/)
+/pascal/build/
+*.ppu
+# Ada (GNAT) intermediates (binaries land in bin/)
+/ada/build/
+*.ali
+# Fortran (gfortran) module intermediates (binaries land in bin/)
+/fortran/build/
+*.mod
 
 # scratch A/B checkpoints (gold = mmap build, read = read() build)
 *.gold

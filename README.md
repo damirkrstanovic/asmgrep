@@ -7,10 +7,13 @@ repositories it runs **~3× faster than GNU grep and ~2× faster than ripgrep**
 (geomean, aligned flags), with byte-for-byte identical results.
 
 This repo is also an **experiment**: the same program is reimplemented in **C**,
-**Zig**, **Go**, and **Rust** — both *hand-optimized* (same syscall strategy, SIMD,
-parallel walker) and *idiomatic stdlib*. The question: *did writing it in assembly
-buy any of the speed, or was it the engineering all along?* **Answer below; the
-short version is: it's the engineering, not the language.**
+**Zig**, **Go**, **Rust**, **Odin**, **Java**, **Kotlin**, **Clojure**,
+**Common Lisp**, **Haskell**, **OCaml**, **FreePascal**, **Ada**, and **Fortran** —
+both *hand-optimized* (same syscall strategy, SIMD, parallel walker)
+and *idiomatic stdlib*. The question: *did writing it in assembly buy any of the speed,
+or was it the engineering all along?* **Answer below; the short version is: within the
+compiled tier it's the engineering, not the language — but for managed JVM runtimes the
+startup/warmup tax on a short-lived process becomes the whole story.**
 
 ```
 grep [-r] [-i] PATTERN PATH...
@@ -37,13 +40,31 @@ Geomean slowdown vs the hand-written assembly, `-ri error`, 10 repos, 6 cores
 | **idiomatic** + naive threads (C / Zig / Go / Rust) | ~9.7× |
 | **idiomatic** + threads + reused buffer + prefix binary-check | **C 3.2× / Zig 2.8× / Go 4.4× / Rust 2.4×** |
 
-### 1. The language barely matters
+Ten more languages were added later (consistent single-pass benchmark, see RESULTS.md) — and
+they sort by **runtime model**, not syntax:
+
+| implementation | character |
+|---|---|
+| **Odin** (compiled, native) | lands in the C/Zig idiomatic cluster (~3.5× single-threaded); sub-ms startup |
+| **Common Lisp** (SBCL native image) | ~3.4 ms startup, tuned-MT scan on par with GNU grep — a dynamic language that performs like a systems one |
+| **Haskell** (GHC, native + RTS) | ~17 ms startup; immutable `ByteString` *forbids* the buffer-reuse pillar, so it's pinned in the allocation-heavy regime (~1.5× threading) |
+| **OCaml** (ocamlopt+flambda, Domains) | 1.0 ms startup; mutable `Bytes` ⇒ buffer reuse works, tuned-MT scales ~3.8×; slow single-threaded scan (hand-rolled search, no stdlib `memmem`) — flambda+`-O3` bought only ~9%, so it's the algorithm, not the compiler |
+| **FreePascal** (fpc, native) | **0.41 ms** startup (fastest after asm); buffer reuse works; hand-rolled-search algorithm tax single-threaded |
+| **Ada** (GNAT, tasks) | 0.60 ms startup; per-task buffer reuse scales ~3.5×; hand-rolled scalar search ⇒ slow single-threaded |
+| **Fortran** (gfortran, OpenMP) | 0.80 ms startup; built-in `index()` substring search ⇒ ~2× faster single-threaded than Ada, and tuned-MT *ties GNU grep*; walk needs `iso_c_binding` opendir/readdir |
+| **Java / Kotlin** (JVM, bare `java`) | ~30–41 ms fixed startup; on short jobs the JIT never warms and threads make it *worse* (tuned-MT slower than single-threaded) |
+| **Clojure** (JVM, AOT) | ~0.45 s runtime-init constant before any work — in a class of its own |
+
+### 1. The language barely matters *(within the compiled tier)*
 
 Within a tier, every language clusters: optimized asm ≈ C ≈ Zig; idiomatic
 C ≈ Zig ≈ Go ≈ Rust (≤ ~1.8× apart). The gap *between* tiers is ~14×. Hand-written
 assembly bought **~nothing** on the actual work — a modern compiler matches it and
 the out-of-order CPU does the register allocation/scheduling anyway. Assembly's only
-real edge is no-libc startup on sub-2 ms inputs.
+real edge is no-libc startup on sub-2 ms inputs. Odin (native) joins this cluster; even
+SBCL's native image is close. The clustering **breaks for JVM runtimes** — there the
+startup + JIT-warmup tax on a short-lived process, not the language or algorithm,
+sets the floor (Java/Kotlin ~30–40 ms, Clojure ~0.45 s). See RESULTS.md.
 
 ### 2. Performance is three pillars — and they *interact*
 
@@ -81,14 +102,29 @@ c/grep_std_mt.c   C, idiomatic + pthreads        (multithreaded)
 zig/grep_std_mt.zig  Zig, idiomatic + std.Thread (multithreaded)
 go/mt/main.go     Go, idiomatic + goroutines     (multithreaded)
 rust/             Rust, idiomatic walkdir+rayon+memchr (parallel; ripgrep's crates)
+odin/             Odin, 3 variants (native compiled, like C/Zig)
+java/             Java (JDK), 3 variants (idiomatic / +threads / +tuned)
+kotlin/           Kotlin (JVM), 3 variants
+clojure/          Clojure (JVM, AOT'd uberjars via Leiningen), 3 variants
+lisp/             Common Lisp (SBCL save-lisp-and-die native images), 3 variants
+haskell/          Haskell (GHC, native + threaded RTS), 3 variants
+ocaml/            OCaml (ocamlopt native, OCaml-5 Domains), 3 variants
+pascal/           Free Pascal (fpc native), 3 variants
+ada/              Ada (GNAT native, tasks + protected objects), 3 variants
+fortran/          Fortran (gfortran native, OpenMP; C-interop walk), 3 variants
 bench/            iouring_probe.c and friends
 docs/RESULTS.md   full benchmark numbers + methodology
-tests/            run.sh (correctness), compare.sh / bench.sh (perf, hyperfine)
-bin/              build output (git-ignored)
+tests/            run.sh (correctness vs grep), verify_impl.sh (any binary vs grep),
+                  compare.sh / bench.sh (perf, hyperfine)
+bin/              build output (git-ignored): native binaries + JVM launcher scripts
 ```
 
-`make all` builds asm + C; `make c`/`make zig`/`make cstd`/`make zigstd`/`make go`
-build the rest.
+`make all` builds asm + C; `make c`/`make zig`/`make cstd`/`make zigstd`/`make go`/
+`make odin`/`make lisp` build the native rest; `make java`/`make kotlin`/`make clojure`
+(or `make jvm` for all three) build the JVM versions. The JVM and Lisp builds drop
+launcher scripts / native executables into `bin/` named `jgrep_std*`, `ktgrep_std*`,
+`cljgrep_std*`, `clgrep_std*`, `odingrep_std*` (suffixes: `_mt` naive threads,
+`_mt_tuned` reused-buffer + prefix-check).
 
 ## Build & run
 
@@ -98,9 +134,22 @@ make c           # builds the C version        -> bin/cgrep   (gcc/clang)
 make zig         # builds the Zig version      -> bin/zgrep   (needs `zig`)
 make all         # asm + C
 
+make odin        # Odin native      (needs `odin`)
+make lisp        # Common Lisp      (needs `sbcl`; native saved images)
+make haskell     # Haskell          (needs `ghc`; native + threaded RTS)
+make ocaml       # OCaml            (needs `ocamlopt`; OCaml-5 Domains)
+make pascal      # Free Pascal      (needs `fpc`)
+make ada         # Ada             (needs `gnatmake`)
+make fortran     # Fortran         (needs `gfortran`; OpenMP for MT)
+make java        # Java             (needs JDK `javac`/`java`)
+make kotlin      # Kotlin           (needs `kotlinc`)
+make clojure     # Clojure          (needs `lein`; AOT'd uberjars)
+make jvm         # java + kotlin + clojure
+
 bin/asmgrep -ri ontology /path/to/repo
 
 make test        # correctness: 14 cases + a parallel-path case vs grep -F
+./tests/verify_impl.sh bin/jgrep_std bin/odingrep_std ...  # check any binary vs grep
 make bench       # synthetic micro-benchmarks (needs hyperfine)
 ./tests/compare.sh   # asmgrep vs grep vs ripgrep across repos
 ```
