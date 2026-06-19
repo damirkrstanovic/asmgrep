@@ -236,6 +236,23 @@ $(BIN)/cljgrep_std: clojure/src/cljgrep/grepstd.clj clojure/src/cljgrep/grepmt.c
 
 jvm: java kotlin clojure
 
+# GraalVM native-image: AOT-compile the EXISTING java/*.java (UNCHANGED) into a
+# native ELF -- the loop-closer on "is the JVM tax the language or the runtime?".
+# Same bytecode that runs ~30-40 ms-startup under `java` becomes a sub-ms native
+# binary. native-image ships inside the GraalVM JDK but isn't on PATH; point
+# GRAALVM_HOME at it (override on the make line if yours differs).
+GRAALVM_HOME ?= /usr/lib/jvm/java-25-graalvm-ce
+NI := $(GRAALVM_HOME)/bin/native-image --no-fallback -march=native
+graalvm: $(BIN)/graalgrep_std $(BIN)/graalgrep_std_mt $(BIN)/graalgrep_std_mt_tuned
+java/graal_classes/GrepStd.class: java/GrepStd.java java/GrepMt.java java/GrepMtTuned.java
+	mkdir -p java/graal_classes && $(GRAALVM_HOME)/bin/javac -d java/graal_classes $^
+$(BIN)/graalgrep_std: java/graal_classes/GrepStd.class | $(BIN)
+	$(NI) -cp java/graal_classes GrepStd     -o $@
+$(BIN)/graalgrep_std_mt: java/graal_classes/GrepStd.class | $(BIN)
+	$(NI) -cp java/graal_classes GrepMt      -o $@
+$(BIN)/graalgrep_std_mt_tuned: java/graal_classes/GrepStd.class | $(BIN)
+	$(NI) -cp java/graal_classes GrepMtTuned -o $@
+
 # Common Lisp (SBCL): save-lisp-and-die -> standalone native executables
 # (~4 ms startup; full runtime embedded, so binaries are large).
 lisp: $(BIN)/clgrep_std $(BIN)/clgrep_std_mt $(BIN)/clgrep_std_mt_tuned
@@ -271,4 +288,4 @@ compare: all
 clean:
 	rm -rf $(BIN)
 
-.PHONY: all asm c zig test bench compare clean java kotlin clojure jvm odin lisp haskell ocaml pascal ada fortran d csharp-aot cpp python awk lua js scripting
+.PHONY: all asm c zig test bench compare clean java kotlin clojure jvm odin lisp haskell ocaml pascal ada fortran d csharp-aot cpp python awk lua js scripting graalvm

@@ -4,6 +4,7 @@
 /rust/target/
 # JVM build artifacts (sources tracked; bytecode/jars are regenerable)
 /java/*.class
+/java/graal_classes/
 /kotlin/*.jar
 /clojure/target/
 # Lisp / SBCL fasl caches (executables land in bin/)

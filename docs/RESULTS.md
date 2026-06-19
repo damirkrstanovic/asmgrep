@@ -568,6 +568,42 @@ parallelism + I/O strategy, and the language barely matters.
    still cannot out-run a worse-suited language with a better one — the project's thesis, in the
    extreme.
 
+## GraalVM native-image: the loop-closer (2026-06-20)
+
+The repo's sharpest claim is that the JVM rows (Java/Kotlin ~30–41 ms startup, tuned-MT *slower*
+than single-threaded) are sunk by the **runtime model** — startup + JIT-warmup on a short-lived
+process — not by the language or the code. GraalVM `native-image` lets us prove it directly: take the
+**unchanged** `java/{GrepStd,GrepMt,GrepMtTuned}.java`, AOT-compile the same bytecode to a native ELF
+(`native-image --no-fallback -march=native`, ~48 s/variant), and re-measure. Byte-for-byte identical
+to grep (48/48). Same corpus/method as the JVM tables.
+
+| | bare `java` | GraalVM native (same bytecode) | grep |
+|---|--:|--:|--:|
+| **startup** (README.md) | 30.6 ms | **2.4 ms** | — |
+| cognee std | 317.3 | 258.1 | 23.9 |
+| cognee **tuned-MT** | 278.5 (1.1× over std) | **43.6 (5.9×)** | 23.9 |
+| immich std | 674.6 | 618.5 | 47.7 |
+| immich **tuned-MT** | 380.9 (1.8×) | **65.9 (9.4×)** | 47.7 |
+
+Two results, both from source that did not change a character:
+
+1. **Startup 30.6 → 2.4 ms (12.7×).** The JVM boot/classload tax simply evaporates once the bytecode
+   is AOT-compiled — GraalVM native lands in the sub-3 ms band with SBCL/LuaJIT, out of the JVM tier.
+2. **The deeper one — threading goes from "barely helps" to "scales."** Under bare `java`, tuned-MT is
+   only 1.1–1.8× its own single-threaded run (the recorded "JVM threads don't help on short jobs"
+   result): on a process that lives ~300 ms the JIT never warms, so the scan runs cold (interpreted /
+   C1) and the extra threads mostly contend. The *same code* under native-image ships the scan
+   AOT-compiled from instruction one, so the threads parallelize real native work — tuned-MT scales
+   **5.9–9.4×** over single-threaded and lands within ~1.4–1.8× of GNU grep.
+
+So the JVM's entire poor showing was the **runtime** (startup + JIT-warmup on a short-lived process),
+not the language and not the algorithm — recompile the identical bytecode ahead-of-time and it jumps
+from the JVM tier straight into the native compiled cluster. This is the cleanest "language vs runtime"
+separation in the repo: same `.java`, same `.class`, only the execution model changed. (Cost: the
+native binaries are ~13.8 MB each — the SubstrateVM runtime is statically embedded, like SBCL's saved
+images. Build needs the GraalVM JDK's `native-image`, which ships in the JDK dir, e.g.
+`/usr/lib/jvm/java-25-graalvm-ce/bin`; `make graalvm GRAALVM_HOME=...` points at it.)
+
 ## Optimizations implemented
 
 | technique | effect |

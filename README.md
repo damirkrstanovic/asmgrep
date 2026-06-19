@@ -61,6 +61,7 @@ they sort by **runtime model**, not syntax:
 | **Fortran** (gfortran, OpenMP) | 0.80 ms startup; built-in `index()` substring search ⇒ ~2× faster single-threaded than Ada, and tuned-MT *ties GNU grep*; walk needs `iso_c_binding` opendir/readdir |
 | **Java / Kotlin** (JVM, bare `java`) | ~30–41 ms fixed startup; on short jobs the JIT never warms and threads make it *worse* (tuned-MT slower than single-threaded) |
 | **Clojure** (JVM, AOT) | ~0.45 s runtime-init constant before any work — in a class of its own |
+| **GraalVM** `native-image` (the *same* Java, AOT'd) | the **loop-closer**: AOT-compiling the **unchanged** Java bytecode to a native ELF drops startup **30.6 → 2.4 ms** *and* makes tuned-MT actually scale (immich **9.4×** over single-threaded vs bare-`java`'s 1.8×), landing within ~1.4× grep. Proof the JVM tax was the **runtime** (startup + JIT-warmup on a short process), not the language or the code |
 | **LuaJIT** (2.1) | tuned-MT **ties grep** (~1.1×) at **2.6 ms** startup — but *not* because of the JIT: `luajit -joff` changes the time by 1.01×, because `string.find` is a C call (`memchr`/`memcmp`), same as CPython's `bytes.find`. It reaches the native cluster via **cheap `fork()` parallelism + sub-3 ms startup**, not trace compilation (verified — see RESULTS.md). No threads ⇒ `_mt` forks workers (each `flock()`s its output) |
 | **JavaScript** (node/bun/deno, one `.mjs`) | V8/JSC JIT; node/deno startup is **JVM-class** (~32–33 ms) so they don't escape the short-process tax — but **bun does** (8.6 ms). Unlike the JVM, `worker_threads` *scales* (mutable `Buffer` ⇒ pillar 2 works): tuned-MT ~4.4× grep |
 | **Python** (CPython 3.14, GIL) | C-backed `bytes.find` keeps `_std` at ~5× grep; the shipped `multiprocessing.Pool` `_mt` *regresses* — but that's the **library pickling results over pipes**, not the language: a raw `os.fork` pool (no IPC, LuaJIT's model) is **3–4× faster and ties LuaJIT** (immich 59 vs 46 ms). The scripting tier sorts by *which concurrency primitive is idiomatic*, not language/JIT |
@@ -117,6 +118,7 @@ cpp/              C++ (g++, idiomatic Modern C++23: filesystem+string_view+jthre
 odin/             Odin, 3 variants (native compiled, like C/Zig)
 d/                D (dmd native, GC runtime), 3 variants
 java/             Java (JDK), 3 variants (idiomatic / +threads / +tuned)
+                  + `make graalvm` AOT-compiles the SAME java/ sources to native ELFs (GraalVM native-image)
 csharp/aot/       C# (.NET 10 NativeAOT, true native ELF + SIMD), 3 variants
 kotlin/           Kotlin (JVM), 3 variants
 clojure/          Clojure (JVM, AOT'd uberjars via Leiningen), 3 variants
@@ -169,6 +171,8 @@ make csharp-aot  # C# NativeAOT     (needs `dotnet-sdk` + clang/lld; true native
 make kotlin      # Kotlin           (needs `kotlinc`)
 make clojure     # Clojure          (needs `lein`; AOT'd uberjars)
 make jvm         # java + kotlin + clojure
+make graalvm     # GraalVM native-image of the SAME java/ sources (needs GraalVM JDK;
+                 #   point GRAALVM_HOME at it, e.g. /usr/lib/jvm/java-25-graalvm-ce)
 make python      # Python           (needs `python3`)
 make lua         # LuaJIT           (needs `luajit`)
 make js          # JavaScript       (needs `node`; bun/deno launchers too)
