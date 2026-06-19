@@ -604,6 +604,47 @@ native binaries are ~13.8 MB each — the SubstrateVM runtime is statically embe
 images. Build needs the GraalVM JDK's `native-image`, which ships in the JDK dir, e.g.
 `/usr/lib/jvm/java-25-graalvm-ce/bin`; `make graalvm GRAALVM_HOME=...` points at it.)
 
+## Crystal and Elixir: native-with-GC vs the BEAM (2026-06-20)
+
+Two more languages, both garbage-collected — and they land at *opposite ends* of the startup
+spectrum, which is the whole point: GC isn't what sorts them, the runtime model is. All
+byte-identical to grep (`tests/verify_impl.sh`, 96/96 across the 6 launchers).
+
+| repo | Crystal std / mt / tuned | Elixir std / mt / tuned | grep |
+|---|--:|--:|--:|
+| navidrome | 53.6 / 23.9 / 24.5 | 921 / 644 / 624 | ~16 |
+| cognee | 155 / 96.1 / 75.5 | 1362 / 1076 / 563 | ~25 |
+| immich | 360 / 215 / 171 | 2287 / 1373 / 761 | ~49 |
+| **startup** | **1.09 ms** | **~480 ms** | — |
+
+1. **Crystal: Ruby syntax, LLVM-native — the D/SBCL "looks dynamic, runs native" story again.**
+   `def`/blocks/`Array` read like Ruby, but `crystal build --release` emits a native ELF (over LLVM,
+   with a GC) that starts in **1.09 ms** — squarely in the native cluster beside D (0.8 ms) and OCaml
+   (1.0 ms), nowhere near a VM tax. Crystal's `Bytes` are *mutable*, so the buffer-reuse pillar
+   applies: `_mt_tuned` reuses one read buffer + 64 KB-prefix-checks, and it visibly beats naive MT on
+   the big trees (immich 171 vs 215 ms, cognee 75.5 vs 96.1) — landing **3.0–3.5× grep**. Real
+   parallelism is the one wrinkle: Crystal fibers are single-threaded by default, so `_mt` needs
+   `-Dpreview_mt` at build time and `CRYSTAL_WORKERS` at *runtime* (the binaries are wrapped in a
+   launcher that sets it). The tuned variant trades the stdlib SIMD `String#byte_index` for a scalar
+   search over the raw reused `Bytes` (Crystal `Slice` has no substring search) — the same memory-pillar-
+   beats-scalar-scan-tax tradeoff as D/OCaml/Pascal.
+
+2. **Elixir (BEAM): the exotic VM, and the slowest-starting runtime in the whole repo.** ~**480 ms**
+   just to boot ERTS before a byte is searched — past even Clojure's ~450 ms, making it *the* startup
+   floor of the set. The scan is fine: `:binary.match/2` is a C BIF, so the inner search is native and
+   not the bottleneck; the cost is everywhere *around* it — ERTS boot, slurping files into immutable
+   binaries, the byte-fold round-trip for `-i`, and per-file GC. `Task.async_stream` is the most
+   idiomatic concurrency in the entire set (one line spreads files across all schedulers) and it does
+   map the parallelism pillar (~1.4–1.7×), but **immutable binaries forbid the buffer-reuse half of
+   pillar 2** (the Haskell constraint) — only the prefix binary-check half maps, and that's the biggest
+   win here (`_mt_tuned` ~2× over `_mt` on binary-heavy trees: immich 761 vs 1373 ms, because it stops
+   after one 64 KB read on `.git` packs). Net, the BEAM sits firmly in the bottom tier — 15–60× grep,
+   dominated by startup and managed-runtime overhead.
+
+The pair is the thesis in miniature: **two GC'd languages, ~440× apart on startup (1.09 ms vs 480 ms),
+sorted entirely by runtime model** — native-AOT-with-GC vs a bytecode VM that boots a whole actor
+runtime per invocation. GC was never the variable.
+
 ## Optimizations implemented
 
 | technique | effect |

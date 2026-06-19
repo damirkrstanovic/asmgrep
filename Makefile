@@ -253,6 +253,30 @@ $(BIN)/graalgrep_std_mt: java/graal_classes/GrepStd.class | $(BIN)
 $(BIN)/graalgrep_std_mt_tuned: java/graal_classes/GrepStd.class | $(BIN)
 	$(NI) -cp java/graal_classes GrepMtTuned -o $@
 
+# Crystal: Ruby-like syntax, LLVM-compiled to a native binary with a GC. _std is
+# single-threaded fibers; the _mt variants need -Dpreview_mt to run fibers on real
+# OS threads, and the thread count is read from CRYSTAL_WORKERS at *runtime* -- so
+# the mt binaries are wrapped in a launcher that sets it (else they run 1-threaded).
+crystal: $(BIN)/crgrep_std $(BIN)/crgrep_std_mt $(BIN)/crgrep_std_mt_tuned
+$(BIN)/crgrep_std: crystal/grep_std.cr | $(BIN)
+	crystal build --release -o $@ $<
+$(BIN)/crgrep_std_mt: crystal/grep_mt.cr | $(BIN)
+	crystal build --release -Dpreview_mt -o $@.bin $<
+	printf '#!/bin/sh\nexec env CRYSTAL_WORKERS="$${CRYSTAL_WORKERS:-$$(nproc)}" $(CURDIR)/$@.bin "$$@"\n' > $@ && chmod +x $@
+$(BIN)/crgrep_std_mt_tuned: crystal/grep_mt_tuned.cr | $(BIN)
+	crystal build --release -Dpreview_mt -o $@.bin $<
+	printf '#!/bin/sh\nexec env CRYSTAL_WORKERS="$${CRYSTAL_WORKERS:-$$(nproc)}" $(CURDIR)/$@.bin "$$@"\n' > $@ && chmod +x $@
+
+# Elixir (BEAM/Erlang VM): the exotic runtime. :binary.match/2 (C BIF) literal scan
+# + File walk; _mt/_mt_tuned spread files across schedulers via Task.async_stream.
+# Launchers exec `elixir script.exs` (the BEAM boots fresh each run -- ~480 ms tax).
+elixir: $(BIN)/exgrep_std
+$(BIN)/exgrep_std: elixir/grep_std.exs elixir/grep_mt.exs elixir/grep_mt_tuned.exs | $(BIN)
+	printf '#!/bin/sh\nexec elixir $(CURDIR)/elixir/grep_std.exs -- "$$@"\n'      > $(BIN)/exgrep_std
+	printf '#!/bin/sh\nexec elixir $(CURDIR)/elixir/grep_mt.exs -- "$$@"\n'       > $(BIN)/exgrep_std_mt
+	printf '#!/bin/sh\nexec elixir $(CURDIR)/elixir/grep_mt_tuned.exs -- "$$@"\n' > $(BIN)/exgrep_std_mt_tuned
+	chmod +x $(BIN)/exgrep_std $(BIN)/exgrep_std_mt $(BIN)/exgrep_std_mt_tuned
+
 # Common Lisp (SBCL): save-lisp-and-die -> standalone native executables
 # (~4 ms startup; full runtime embedded, so binaries are large).
 lisp: $(BIN)/clgrep_std $(BIN)/clgrep_std_mt $(BIN)/clgrep_std_mt_tuned
@@ -288,4 +312,4 @@ compare: all
 clean:
 	rm -rf $(BIN)
 
-.PHONY: all asm c zig test bench compare clean java kotlin clojure jvm odin lisp haskell ocaml pascal ada fortran d csharp-aot cpp python awk lua js scripting graalvm
+.PHONY: all asm c zig test bench compare clean java kotlin clojure jvm odin lisp haskell ocaml pascal ada fortran d csharp-aot cpp python awk lua js scripting graalvm crystal elixir
