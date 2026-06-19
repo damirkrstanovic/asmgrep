@@ -378,6 +378,97 @@ sections; startup is the single-file figure):
    was the remaining gap. Built with `make csharp-aot` (needs `dotnet-sdk` + clang/lld);
    `csgrep_aot_std{,_mt,_mt_tuned}`.
 
+## One more: C++ (idiomatic Modern C++23) (2026-06-19)
+
+The question this time was deliberately *not* "is C++ fast" (it's native, of course it
+is) but **what does idiomatic C++ cost vs idiomatic C** — written as real **Modern C++23**,
+not "C with `std::`". Same three tiers (`cpp/grep_std.cpp`, `grep_mt.cpp`, `grep_mt_tuned.cpp`),
+all leaning into the heavier idioms on purpose:
+
+- **walk:** `std::filesystem::recursive_directory_iterator` (not `nftw`/`opendir`)
+- **read:** `std::ifstream` + `fs::file_size`, errors flowing through `std::expected<…,std::errc>`
+- **scan:** `std::string_view::find` — libstdc++'s `memchr`/`memcmp`-backed search, the idiomatic
+  analogue of `memmem` (Boyer-Moore-Horspool was rejected: 4× slower on short patterns)
+- **output:** `std::format_to` into a per-thread `std::string`, `std::print` to flush
+- **parallel:** a `std::jthread` pool + `std::atomic<size_t>` work index; tuned worker reuses one
+  `std::vector<char>` per thread + reads a 64 KB prefix, binary-checks it, reads the rest only if
+  not binary
+
+All 3 are byte-for-byte identical to `grep` (`tests/verify_impl.sh`, 16 cases each = 48/48).
+Built with `make cpp` (`g++ -O2 -std=c++23`, `-pthread` for the MT variants).
+
+### Where the idiomatic-C++ tax actually was (it's not the abstractions)
+
+The *first* cut of cpp·std came in **1.33× slower than idiomatic C** (22.3× vs C's 16.8× on asm),
+and the obvious story — "high-level abstractions cost you" — turned out to be **wrong**. `perf` is
+sandbox-restricted here, so attribution was done two ways. First, `time`-split over 30 runs on
+immich showed the gap is **user CPU, not syscalls**: C `user=1.29s sys=5.07s`, C++
+`user=3.19s sys=5.85s` — system time (kernel I/O) is the same; C++ burns **2.5× the user CPU**.
+(strace confirms C++ even makes *fewer* syscalls — 15k vs 27k — C's `fopen`/`fseek`/`ftell`/`rewind`
+dance generates a pile of `lseek`/`fstat`.)
+
+Then a compile-time ablation (one source, each idiom toggled back to its C form; immich `-ri error`,
+**user CPU**, 30 runs) located it precisely:
+
+| variant | what changed from shipped C++ | user s |
+|---|---|--:|
+| baseline | shipped idioms | 3.20 |
+| swap `format_to` → `string::append` | output formatting | 3.08 |
+| swap `ifstream` → `fopen`/`fread` | read mechanism | 3.25 |
+| swap `recursive_directory_iterator` → `nftw` | the walk | 3.18 |
+| swap `string_view::find` → `memmem` | the scan | 3.03 |
+| swap `ranges::transform` → C `for` | the `-i` lowercase | 3.31 |
+| **drop the `vector::resize` zero-fill** | buffer allocation | **1.72** |
+| *all five idioms → C, but keep `resize`* | — | 3.29 |
+| *all five → C, **and** no zero-fill* | — | 1.80 |
+| C reference (`cgrep_std`) | — | 1.28 |
+
+**The entire gap was `std::vector<char>::resize(sz)`.** It value-initializes — a full-buffer
+`memset` to 0 — and then `read()` immediately overwrites every byte, so the idiomatic `vector`
+writes each file's bytes **twice**. That one line was **~1.5 s of the ~1.9 s user-CPU gap (≈78%)**.
+Swapping *all five* high-level idioms to their C forms while keeping the `resize` stays at 3.3 s;
+keeping every idiom but killing the zero-fill drops to 1.7 s. `std::filesystem`, `std::ifstream`,
+`std::format_to`, `std::ranges::transform` are **collectively ~free** here; `string_view::find` is
+the only one with a measurable (small, ~6%) edge for `memmem`. (The `-i` path actually has *two*
+such double-writes — the read buffer and the lowercased copy — both fixed below.)
+
+**The fix is itself idiomatic modern C++:** non-zeroing allocation is exactly what
+`std::make_unique_for_overwrite<char[]>` (C++20, the read buffer) and
+`std::string::resize_and_overwrite` (C++23, the lowercase buffer) are *for*. With both applied to
+the per-file-allocating variants (std + naive-mt; the tuned variant's reused buffer only grows, so
+it pays the zero-fill once during warmup and never needed it):
+
+| impl | navidrome | cognee | onyx | immich | geo vs asm | vs C |
+|---|--:|--:|--:|--:|--:|--:|
+| asm | 3.52 | 5.03 | 5.27 | 11.17 | 1.00× | — |
+| **cpp·std** | 33.7 | 101 | 120 | 216 | **17.1×** | **1.04× C·std** |
+| C·std (ref) | 31.8 | 97.2 | 119 | 208 | 16.5× | — |
+| **cpp·mt** (naive) | 13.0 | 72.7 | 84.7 | 156 | **10.5×** | — |
+| **cpp·tuned** | 10.5 | 18.1 | 17.4 | 26.8 | **3.03×** | 1.10× C·tuned |
+| C·tuned (ref) | 9.69 | 15.7 | 16.5 | 24.2 | 2.76× | — |
+| grep | 15.4 | 24.4 | 27.5 | 47.6 | 4.66× | — |
+
+(The two runs have slightly different absolute baselines — warm-cache noise — so compare via the
+geomean-vs-asm column. The `for_overwrite` change moved cpp·std from **1.33× → 1.04× of idiomatic
+C**, and dropped naive-mt 14.1× → 10.5×.)
+
+1. **C++ lands exactly in the native compiled tier — and now ties idiomatic C at *every* tier.**
+   cpp·std ≈ C·std (1.04×), cpp·tuned 3.03× ≈ C·tuned 2.76×, **beating GNU grep (4.66×) by ~1.5×**.
+   The thesis "within the compiled tier the language is irrelevant" extends cleanly to C++: the
+   scans are the same glibc primitives, and once the buffer handling matches, so does the speed.
+
+2. **The "idiomatic-C++ tax" was a hidden `memset`, not the abstractions.** The high-level idioms
+   that *look* expensive (`filesystem`, `ifstream`, `format_to`, ranges) cost almost nothing; the
+   expensive thing was the most innocent-looking line in the program — a container `resize`. The
+   lesson generalizes past grep: in C++ the default-construct/zero-initialize behavior of the
+   standard containers is the performance trap, and the `for_overwrite` family is the escape hatch.
+
+3. **The memory pillar reproduces cleanly, again.** Bolting `std::jthread` onto the
+   allocate-per-file code (cpp·mt) recovers far less than 6× — immich 216 → 156 ms — even after the
+   zero-fill fix, because per-file allocation still serializes on page faults under the kernel
+   page-table lock. Reuse-one-buffer + prefix-check (cpp·tuned) then takes 10.5× → 3.03× — the same
+   memory-pillar jump seen in every other language, with no algorithm or scan change.
+
 ## Optimizations implemented
 
 | technique | effect |

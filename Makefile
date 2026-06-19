@@ -127,6 +127,21 @@ $(BIN)/dgrep_std_mt: d/grep_mt.d | $(BIN)
 $(BIN)/dgrep_std_mt_tuned: d/grep_mt_tuned.d | $(BIN)
 	$(DMD) -of=$@ d/grep_mt_tuned.d && rm -f d/grep_mt_tuned.o
 
+# C++: idiomatic Modern C++23 (g++), the three-variant native cluster like
+# Odin/D/Pascal. std::filesystem walk + std::string_view::find scan + std::jthread
+# pool; the tuned worker reuses one per-thread buffer + prefix-checks. Heavier
+# C++23 idioms on purpose (std::expected/format_to/print/span/ranges) -- NOT
+# "better C". MT variants need -pthread for std::jthread/atomic.
+CXX ?= g++
+CXXFLAGS_CPP := -O2 -std=c++23
+cpp: $(BIN)/cppgrep_std $(BIN)/cppgrep_std_mt $(BIN)/cppgrep_std_mt_tuned
+$(BIN)/cppgrep_std: cpp/grep_std.cpp | $(BIN)
+	$(CXX) $(CXXFLAGS_CPP) -o $@ $<
+$(BIN)/cppgrep_std_mt: cpp/grep_mt.cpp | $(BIN)
+	$(CXX) $(CXXFLAGS_CPP) -pthread -o $@ $<
+$(BIN)/cppgrep_std_mt_tuned: cpp/grep_mt_tuned.cpp | $(BIN)
+	$(CXX) $(CXXFLAGS_CPP) -pthread -o $@ $<
+
 # ----------------------------------------------------------------------------
 # Hosted / JVM languages: compile to bytecode, run via `java`. A tiny launcher
 # script is (re)generated into bin/ (which is git-ignored) by each rule.
@@ -203,4 +218,4 @@ compare: all
 clean:
 	rm -rf $(BIN)
 
-.PHONY: all asm c zig test bench compare clean java kotlin clojure jvm odin lisp haskell ocaml pascal ada fortran d csharp-aot
+.PHONY: all asm c zig test bench compare clean java kotlin clojure jvm odin lisp haskell ocaml pascal ada fortran d csharp-aot cpp

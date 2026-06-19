@@ -7,7 +7,7 @@ repositories it runs **~3× faster than GNU grep and ~2× faster than ripgrep**
 (geomean, aligned flags), with byte-for-byte identical results.
 
 This repo is also an **experiment**: the same program is reimplemented in **C**,
-**Zig**, **Go**, **Rust**, **Odin**, **D**, **Java**, **C#**, **Kotlin**, **Clojure**,
+**C++**, **Zig**, **Go**, **Rust**, **Odin**, **D**, **Java**, **C#**, **Kotlin**, **Clojure**,
 **Common Lisp**, **Haskell**, **OCaml**, **FreePascal**, **Ada**, and **Fortran** —
 both *hand-optimized* (same syscall strategy, SIMD, parallel walker)
 and *idiomatic stdlib*. The question: *did writing it in assembly buy any of the speed,
@@ -40,11 +40,12 @@ Geomean slowdown vs the hand-written assembly, `-ri error`, 10 repos, 6 cores
 | **idiomatic** + naive threads (C / Zig / Go / Rust) | ~9.7× |
 | **idiomatic** + threads + reused buffer + prefix binary-check | **C 3.2× / Zig 2.8× / Go 4.4× / Rust 2.4×** |
 
-Twelve more languages were added later (consistent single-pass benchmark, see RESULTS.md) — and
+Thirteen more languages were added later (consistent single-pass benchmark, see RESULTS.md) — and
 they sort by **runtime model**, not syntax:
 
 | implementation | character |
 |---|---|
+| **C++** (g++, idiomatic Modern C++23) | native compiled tier; **ties idiomatic C at every tier** (std 1.04×, tuned-MT 3.0× vs asm ≈ C, ~1.5× faster than GNU grep). Instructive: the first cut was 1.33× slower than C, and instrumentation showed the tax was **not** the abstractions (`filesystem`/`ifstream`/`format_to`/`string_view::find` are ~free) but a hidden `memset` — `std::vector::resize` zero-fills before `read()` overwrites, writing every byte twice (~78% of the user-CPU gap). Fixed with `std::make_unique_for_overwrite`/`resize_and_overwrite`. See RESULTS.md |
 | **Odin** (compiled, native) | lands in the C/Zig idiomatic cluster (~3.5× single-threaded); sub-ms startup |
 | **D** (dmd, native + GC) | **0.8 ms** startup — lands squarely in the native compiled tier; mutable arrays ⇒ the buffer-reuse pillar works, so tuned-MT scales ~5× and lands within ~1.3× of GNU grep; hand-rolled-search algorithm tax single-threaded |
 | **C#** (.NET 10 NativeAOT) | true native ELF, **1.6 ms** startup (no VM); vectorized `Span<byte>.IndexOf` scans 454 MB in **77 ms of CPU (5.9 GB/s)** — *less total work than anything else here*, landing ahead of D and near grep. Threading then buys nothing because, like grep itself, it's no longer scan-bound — I/O / per-file syscalls become the floor (see RESULTS.md) |
@@ -104,6 +105,7 @@ c/grep_std_mt.c   C, idiomatic + pthreads        (multithreaded)
 zig/grep_std_mt.zig  Zig, idiomatic + std.Thread (multithreaded)
 go/mt/main.go     Go, idiomatic + goroutines     (multithreaded)
 rust/             Rust, idiomatic walkdir+rayon+memchr (parallel; ripgrep's crates)
+cpp/              C++ (g++, idiomatic Modern C++23: filesystem+string_view+jthread), 3 variants
 odin/             Odin, 3 variants (native compiled, like C/Zig)
 d/                D (dmd native, GC runtime), 3 variants
 java/             Java (JDK), 3 variants (idiomatic / +threads / +tuned)
@@ -123,11 +125,11 @@ tests/            run.sh (correctness vs grep), verify_impl.sh (any binary vs gr
 bin/              build output (git-ignored): native binaries + JVM launcher scripts
 ```
 
-`make all` builds asm + C; `make c`/`make zig`/`make cstd`/`make zigstd`/`make go`/
+`make all` builds asm + C; `make c`/`make cpp`/`make zig`/`make cstd`/`make zigstd`/`make go`/
 `make odin`/`make d`/`make lisp` build the native rest; `make java`/`make csharp`/
 `make kotlin`/`make clojure` (or `make jvm` for the three JVM ones) build the
 managed-runtime versions. The managed and Lisp builds drop launcher scripts /
-native executables into `bin/` named `jgrep_std*`, `csgrep_std*`, `ktgrep_std*`,
+native executables into `bin/` named `cppgrep_std*`, `jgrep_std*`, `csgrep_std*`, `ktgrep_std*`,
 `cljgrep_std*`, `clgrep_std*`, `odingrep_std*`, `dgrep_std*` (suffixes: `_mt` naive
 threads, `_mt_tuned` reused-buffer + prefix-check).
 
@@ -139,6 +141,7 @@ make c           # builds the C version        -> bin/cgrep   (gcc/clang)
 make zig         # builds the Zig version      -> bin/zgrep   (needs `zig`)
 make all         # asm + C
 
+make cpp         # C++ native       (needs `g++` with C++23; idiomatic Modern C++23)
 make odin        # Odin native      (needs `odin`)
 make d           # D native         (needs `dmd`)
 make lisp        # Common Lisp      (needs `sbcl`; native saved images)
