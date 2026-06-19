@@ -143,6 +143,59 @@ $(BIN)/cppgrep_std_mt_tuned: cpp/grep_mt_tuned.cpp | $(BIN)
 	$(CXX) $(CXXFLAGS_CPP) -pthread -o $@ $<
 
 # ----------------------------------------------------------------------------
+# Scripting / interpreted / JIT-scripting tier. No compile step: launcher scripts
+# (into gitignored bin/) exec the interpreter on the source. Variant count is
+# whatever each runtime can HONESTLY support -- gawk has no threads (=> _std only),
+# CPython's GIL makes _mt multiprocessing, LuaJIT has no threads (=> _mt fork()s a
+# worker pool). That asymmetry is itself part of the finding.
+# ----------------------------------------------------------------------------
+
+# Python (CPython 3.x, standard GIL build): os.scandir walk + C-backed bytes.find;
+# _mt/_mt_tuned use multiprocessing (threads can't parallelize under the GIL).
+python: $(BIN)/pygrep_std
+$(BIN)/pygrep_std: python/grep_std.py python/grep_mt.py python/grep_mt_tuned.py | $(BIN)
+	printf '#!/bin/sh\nexec python3 $(CURDIR)/python/grep_std.py "$$@"\n'      > $(BIN)/pygrep_std
+	printf '#!/bin/sh\nexec python3 $(CURDIR)/python/grep_mt.py "$$@"\n'       > $(BIN)/pygrep_std_mt
+	printf '#!/bin/sh\nexec python3 $(CURDIR)/python/grep_mt_tuned.py "$$@"\n' > $(BIN)/pygrep_std_mt_tuned
+	chmod +x $(BIN)/pygrep_std $(BIN)/pygrep_std_mt $(BIN)/pygrep_std_mt_tuned
+
+# GNU awk: the text-DSL built for exactly this -- index() literal scan + readdir
+# walk -- but no threads/no concurrency, so _std only (the missing _mt is a finding).
+awk: $(BIN)/awkgrep_std
+$(BIN)/awkgrep_std: awk/grep_std.awk | $(BIN)
+	printf '#!/bin/sh\nexec gawk -f $(CURDIR)/awk/grep_std.awk -- "$$@"\n' > $(BIN)/awkgrep_std
+	chmod +x $(BIN)/awkgrep_std
+
+# LuaJIT (2.1): trace-compiling JIT; FFI POSIX opendir/readdir walk; string.find
+# (plain) scan. No threads => _mt variants fork() a worker pool (each child flock()s
+# a shared lockfile around its output write -- the cross-process mutexed flush).
+lua: $(BIN)/ljgrep_std $(BIN)/ljgrep_std_mt $(BIN)/ljgrep_std_mt_tuned
+$(BIN)/ljgrep_std: lua/grep_std.lua lua/grep_core.lua | $(BIN)
+	printf '#!/bin/sh\nexec luajit $(CURDIR)/lua/grep_std.lua "$$@"\n'      > $@ && chmod +x $@
+$(BIN)/ljgrep_std_mt: lua/grep_mt.lua lua/grep_core.lua | $(BIN)
+	printf '#!/bin/sh\nexec luajit $(CURDIR)/lua/grep_mt.lua "$$@"\n'       > $@ && chmod +x $@
+$(BIN)/ljgrep_std_mt_tuned: lua/grep_mt_tuned.lua lua/grep_core.lua | $(BIN)
+	printf '#!/bin/sh\nexec luajit $(CURDIR)/lua/grep_mt_tuned.lua "$$@"\n' > $@ && chmod +x $@
+
+# JavaScript: ONE .mjs source set run under three JIT runtimes (node / bun / deno).
+# worker_threads runs unchanged on all three, so the _mt variants are cross-runtime.
+js: js/grep_std.mjs js/grep_mt.mjs js/grep_mt_tuned.mjs js/grep_core.mjs | $(BIN)
+	printf '#!/bin/sh\nexec node $(CURDIR)/js/grep_std.mjs "$$@"\n'              > $(BIN)/nodegrep_std
+	printf '#!/bin/sh\nexec node $(CURDIR)/js/grep_mt.mjs "$$@"\n'              > $(BIN)/nodegrep_std_mt
+	printf '#!/bin/sh\nexec node $(CURDIR)/js/grep_mt_tuned.mjs "$$@"\n'        > $(BIN)/nodegrep_std_mt_tuned
+	printf '#!/bin/sh\nexec bun $(CURDIR)/js/grep_std.mjs "$$@"\n'               > $(BIN)/bungrep_std
+	printf '#!/bin/sh\nexec bun $(CURDIR)/js/grep_mt.mjs "$$@"\n'               > $(BIN)/bungrep_std_mt
+	printf '#!/bin/sh\nexec bun $(CURDIR)/js/grep_mt_tuned.mjs "$$@"\n'         > $(BIN)/bungrep_std_mt_tuned
+	printf '#!/bin/sh\nexec deno run -A $(CURDIR)/js/grep_std.mjs "$$@"\n'       > $(BIN)/denogrep_std
+	printf '#!/bin/sh\nexec deno run -A $(CURDIR)/js/grep_mt.mjs "$$@"\n'       > $(BIN)/denogrep_std_mt
+	printf '#!/bin/sh\nexec deno run -A $(CURDIR)/js/grep_mt_tuned.mjs "$$@"\n' > $(BIN)/denogrep_std_mt_tuned
+	chmod +x $(BIN)/nodegrep_std $(BIN)/nodegrep_std_mt $(BIN)/nodegrep_std_mt_tuned \
+	         $(BIN)/bungrep_std  $(BIN)/bungrep_std_mt  $(BIN)/bungrep_std_mt_tuned \
+	         $(BIN)/denogrep_std $(BIN)/denogrep_std_mt $(BIN)/denogrep_std_mt_tuned
+
+scripting: python awk lua js
+
+# ----------------------------------------------------------------------------
 # Hosted / JVM languages: compile to bytecode, run via `java`. A tiny launcher
 # script is (re)generated into bin/ (which is git-ignored) by each rule.
 # These add a new axis to the experiment: JVM startup + JIT warmup on a
@@ -218,4 +271,4 @@ compare: all
 clean:
 	rm -rf $(BIN)
 
-.PHONY: all asm c zig test bench compare clean java kotlin clojure jvm odin lisp haskell ocaml pascal ada fortran d csharp-aot cpp
+.PHONY: all asm c zig test bench compare clean java kotlin clojure jvm odin lisp haskell ocaml pascal ada fortran d csharp-aot cpp python awk lua js scripting

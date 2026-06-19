@@ -469,6 +469,105 @@ C**, and dropped naive-mt 14.1× → 10.5×.)
    page-table lock. Reuse-one-buffer + prefix-check (cpp·tuned) then takes 10.5× → 3.03× — the same
    memory-pillar jump seen in every other language, with no algorithm or scan change.
 
+## The scripting + JIT tier: Python, gawk, LuaJIT, JavaScript (2026-06-19)
+
+Four more languages — but these open **two whole tiers below the compiled cluster** the experiment
+hadn't sampled: **interpreted** (CPython, gawk) and **JIT-scripting** (LuaJIT, JS on V8/JSC). They
+sort by runtime model even more starkly than the compiled languages did — the spread here is **~200×**,
+from LuaJIT tying grep to gawk three orders of magnitude behind.
+
+A design note that is itself a finding: the three-variant template (`_std`/`_mt`/`_mt_tuned`) **does
+not map onto every runtime**, and *how* it fails to map is informative. gawk has no threads and no
+shared memory → `_std` only. CPython's GIL means threads can't parallelize a CPU scan → `_mt` is
+`multiprocessing` (fork + pickle + IPC). LuaJIT has no threads → `_mt` `fork()`s a worker pool, each
+child `flock()`-guarding its output write (the cross-process analogue of the C mutexed flush). Node's
+`worker_threads` is the only one that maps cleanly to the C model. All byte-for-byte identical to
+`grep` (`tests/verify_impl.sh`: 192/192 across the 12 launchers; gawk is `_std`-only).
+
+**Startup** (search `the` in one small file; the repo's other rows for scale: FreePascal 0.41 ms,
+C# 1.6 ms, SBCL 3.4 ms, Java/Kotlin 30–41 ms, Clojure ~450 ms):
+
+| runtime | startup | tier |
+|---|--:|---|
+| **LuaJIT** | 2.6 ms | native-class, no warmup |
+| **gawk** | 3.7 ms | cheap interpreter boot |
+| **CPython 3.14** | 15.4 ms | ≈ Haskell's RTS |
+| **bun** (JSC) | 24 ms (8.6 ms bare `-e0`) | below the JVM |
+| **node** (V8) | 37 ms (32 ms bare) | JVM band |
+| **deno** (V8) | 44 ms (33 ms bare) | JVM band |
+
+**Scan** (warm cache, `-ri error`, one hyperfine harness, mean ms; gawk from a separate run, it's
+~200× regardless):
+
+| impl | navidrome | cognee | immich | geomean vs grep |
+|---|--:|--:|--:|--:|
+| grep | 15.8 | 24.8 | 49.0 | 1.0× |
+| **LuaJIT** tuned | 16.6 | 31.2 | 50.7 | **1.1×** |
+| LuaJIT std | 52.0 | 207 | 487 | 6.5× |
+| **JS/node** tuned | 113 | 116 | 126 | 4.4× |
+| JS/node std | 134 | 264 | 537 | 10.0× |
+| **Python** std | 64.1 | 140 | 284 | 5.1× |
+| Python tuned-MT | 178 | 188 | 212 | 7.2× |
+| **gawk** std | 1316 | 6977 | 17364 | ~200× |
+
+1. **LuaJIT ties grep — but NOT because of the JIT (we checked, and the obvious story is wrong).**
+   The tuned variant ties grep (1.1× geomean, immich 50.7 vs 49.0 ms) at **2.6 ms startup**. The
+   tempting claim — "the trace-JIT compiles the hot scan to native code" — is **false**: turning the
+   JIT fully off (`luajit -joff`, which drops to LuaJIT's *assembly* interpreter) changes the time by
+   **1.01× (std) / 1.03× (tuned)** — nothing. `string.find(...,plain=true)` is a C fast-function
+   (`lj_str_find` → `memchr`/`memcmp`); the JIT's recorder emits an IR *call* to it, never its own
+   byte-scan loop (`-jv` confirms: only the walk + line-locate *glue* gets traced). So the scan is C
+   with or without the JIT — exactly like CPython's `bytes.find`. What actually puts LuaJIT in the
+   native cluster is (a) **2.6 ms startup** (so forking is cheap) and (b) its *idiomatic* parallelism
+   being `fork()` — near-zero overhead. The pillars still dominate: `_std` is 6.5× grep (faults in
+   big blobs), and only the 64 KB-prefix `_mt_tuned` closes the gap (Lua strings are immutable, so
+   only the "don't read what you'll skip" half of pillar 2 maps — that alone is enough).
+
+2. **JavaScript: V8/JSC do NOT inherit the JVM's startup tax uniformly — but only `bun` escapes it.**
+   node ~32 ms and deno ~33 ms bare are squarely in the Java/Kotlin band; **bun is 8.6 ms** — the one
+   runtime that breaks out, same source, only the engine differs (the cleanest startup sub-story
+   here). Crucially, **unlike the JVM rows, JS scales with threads**: `worker_threads` tuned-MT lands
+   at 4.4× grep (immich 126 ms) while naive threading gains ~nothing — pillar 2 reproduced in a
+   managed runtime, because `Buffer` is mutable and V8 JITs the long scan loop.
+
+3. **Python: the scan is C too, and its parallel "loss" was the *library*, not the language.**
+   `pygrep_std` is competitive (64 ms navidrome, 5.1× grep geomean) because `bytes.find`/`bytes.translate`
+   are C beneath the interpreter (`FASTSEARCH`: memchr / BMH-skip / two-way), leaving a flat ~15 ms
+   boot + per-file glue. The GIL forces `_mt` onto `multiprocessing`, and the shipped `Pool` variant
+   *regresses* — slower than single-threaded except on the largest tree. But that is **`Pool` pickling
+   every result back over a pipe to the parent**, not Python being slow. Swapping *only* the primitive
+   to a raw `os.fork` pool — shared-nothing file slices, each child writing its own stdout under an
+   `flock`, zero IPC (LuaJIT's exact model) — measures the cost of the IPC directly:
+
+   | immich / cognee (`-ri error`, ms) | grep | `multiprocessing.Pool` (shipped) | `os.fork` (no IPC) | LuaJIT tuned |
+   |---|--:|--:|--:|--:|
+   | cognee | 23.6 | 169 | **42.3** | 28.4 |
+   | immich | 46.9 | 190 | **59.3** | 46.3 |
+
+   The `fork` pool is **3–4× faster than `Pool`** and ties LuaJIT / lands ~1.3× of grep — so
+   Python-the-language was never the problem; `Pool.imap` shipping 7301 pickled result-lines through a
+   pipe was. (CPython docs literally advise "better to inherit than pickle/unpickle".) We keep the
+   `multiprocessing` variant shipped because it *is* idiomatic Python parallelism; the `os.fork` run is
+   the ablation that attributes the gap — and a free-threaded 3.14 build would sidestep it a third way
+   (real threads, one address space).
+
+**The meta-finding for this whole tier:** the scan is C in every scripting language and the
+JIT/interpreter is irrelevant to it (LuaJIT `-joff` = 1.01×; CPython's scan never runs bytecode).
+What *sorted* the tier was **which concurrency primitive is idiomatic** — LuaJIT's `fork()` is nearly
+free, Python's `multiprocessing.Pool` pickles results over pipes, gawk has none at all — not the
+language and not the JIT. The same "it's never the thing you'd first credit" lesson as the C++
+`memset`, generalized: across compiled *and* scripting tiers, performance tracks the
+parallelism + I/O strategy, and the language barely matters.
+
+4. **gawk is the floor — and proves "right tool for the job" loses to runtime model.** The one
+   language here built for exactly this (`index()` is a literal substring search handed to you), yet
+   it lands **80–350× behind grep** (1.3 s → 17 s as the tree grows). The gap isn't the algorithm —
+   it's that every byte walks the interpreter loop with no SIMD, no mmap skip, and — fatally — **no
+   concurrency story to recover the loss**, so the deficit *widens* with tree size. Startup is a
+   non-issue (3.7 ms); it can only ever ship `_std`. A purpose-built DSL with the wrong runtime model
+   still cannot out-run a worse-suited language with a better one — the project's thesis, in the
+   extreme.
+
 ## Optimizations implemented
 
 | technique | effect |

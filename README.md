@@ -8,12 +8,16 @@ repositories it runs **~3× faster than GNU grep and ~2× faster than ripgrep**
 
 This repo is also an **experiment**: the same program is reimplemented in **C**,
 **C++**, **Zig**, **Go**, **Rust**, **Odin**, **D**, **Java**, **C#**, **Kotlin**, **Clojure**,
-**Common Lisp**, **Haskell**, **OCaml**, **FreePascal**, **Ada**, and **Fortran** —
+**Common Lisp**, **Haskell**, **OCaml**, **FreePascal**, **Ada**, **Fortran**,
+**Python**, **JavaScript**, **LuaJIT**, and **awk** —
 both *hand-optimized* (same syscall strategy, SIMD, parallel walker)
 and *idiomatic stdlib*. The question: *did writing it in assembly buy any of the speed,
 or was it the engineering all along?* **Answer below; the short version is: within the
 compiled tier it's the engineering, not the language — but for managed JVM runtimes the
-startup/warmup tax on a short-lived process becomes the whole story.**
+startup/warmup tax on a short-lived process becomes the whole story, and across the
+scripting runtimes what spreads results ~200× is *which concurrency primitive is
+idiomatic* (not the JIT): LuaJIT's near-free `fork()` ties grep, while gawk — with no
+concurrency at all — lands three orders of magnitude behind.**
 
 ```
 grep [-r] [-i] PATTERN PATH...
@@ -40,7 +44,7 @@ Geomean slowdown vs the hand-written assembly, `-ri error`, 10 repos, 6 cores
 | **idiomatic** + naive threads (C / Zig / Go / Rust) | ~9.7× |
 | **idiomatic** + threads + reused buffer + prefix binary-check | **C 3.2× / Zig 2.8× / Go 4.4× / Rust 2.4×** |
 
-Thirteen more languages were added later (consistent single-pass benchmark, see RESULTS.md) — and
+Seventeen more languages were added later (consistent single-pass benchmark, see RESULTS.md) — and
 they sort by **runtime model**, not syntax:
 
 | implementation | character |
@@ -57,6 +61,10 @@ they sort by **runtime model**, not syntax:
 | **Fortran** (gfortran, OpenMP) | 0.80 ms startup; built-in `index()` substring search ⇒ ~2× faster single-threaded than Ada, and tuned-MT *ties GNU grep*; walk needs `iso_c_binding` opendir/readdir |
 | **Java / Kotlin** (JVM, bare `java`) | ~30–41 ms fixed startup; on short jobs the JIT never warms and threads make it *worse* (tuned-MT slower than single-threaded) |
 | **Clojure** (JVM, AOT) | ~0.45 s runtime-init constant before any work — in a class of its own |
+| **LuaJIT** (2.1) | tuned-MT **ties grep** (~1.1×) at **2.6 ms** startup — but *not* because of the JIT: `luajit -joff` changes the time by 1.01×, because `string.find` is a C call (`memchr`/`memcmp`), same as CPython's `bytes.find`. It reaches the native cluster via **cheap `fork()` parallelism + sub-3 ms startup**, not trace compilation (verified — see RESULTS.md). No threads ⇒ `_mt` forks workers (each `flock()`s its output) |
+| **JavaScript** (node/bun/deno, one `.mjs`) | V8/JSC JIT; node/deno startup is **JVM-class** (~32–33 ms) so they don't escape the short-process tax — but **bun does** (8.6 ms). Unlike the JVM, `worker_threads` *scales* (mutable `Buffer` ⇒ pillar 2 works): tuned-MT ~4.4× grep |
+| **Python** (CPython 3.14, GIL) | C-backed `bytes.find` keeps `_std` at ~5× grep; the shipped `multiprocessing.Pool` `_mt` *regresses* — but that's the **library pickling results over pipes**, not the language: a raw `os.fork` pool (no IPC, LuaJIT's model) is **3–4× faster and ties LuaJIT** (immich 59 vs 46 ms). The scripting tier sorts by *which concurrency primitive is idiomatic*, not language/JIT |
+| **awk** (gawk, `index()`) | the text-DSL built for exactly this — yet **80–350× grep** and *widening* with tree size, because no threads = no concurrency pillar to recover the interpreted-scan loss. `_std` only (the missing `_mt` is the finding) |
 
 ### 1. The language barely matters *(within the compiled tier)*
 
@@ -118,6 +126,10 @@ ocaml/            OCaml (ocamlopt native, OCaml-5 Domains), 3 variants
 pascal/           Free Pascal (fpc native), 3 variants
 ada/              Ada (GNAT native, tasks + protected objects), 3 variants
 fortran/          Fortran (gfortran native, OpenMP; C-interop walk), 3 variants
+python/           Python (CPython 3.x, GIL; os.scandir + bytes.find), 3 variants (_mt = multiprocessing)
+js/               JavaScript (one .mjs run under node/bun/deno; worker_threads), 3 variants × 3 runtimes
+lua/              LuaJIT (2.1, FFI POSIX walk + string.find; _mt forks workers), 3 variants
+awk/              GNU awk (readdir walk + index() scan), 1 variant (no threads)
 bench/            iouring_probe.c and friends
 docs/RESULTS.md   full benchmark numbers + methodology
 tests/            run.sh (correctness vs grep), verify_impl.sh (any binary vs grep),
@@ -128,9 +140,11 @@ bin/              build output (git-ignored): native binaries + JVM launcher scr
 `make all` builds asm + C; `make c`/`make cpp`/`make zig`/`make cstd`/`make zigstd`/`make go`/
 `make odin`/`make d`/`make lisp` build the native rest; `make java`/`make csharp`/
 `make kotlin`/`make clojure` (or `make jvm` for the three JVM ones) build the
-managed-runtime versions. The managed and Lisp builds drop launcher scripts /
-native executables into `bin/` named `cppgrep_std*`, `jgrep_std*`, `csgrep_std*`, `ktgrep_std*`,
-`cljgrep_std*`, `clgrep_std*`, `odingrep_std*`, `dgrep_std*` (suffixes: `_mt` naive
+managed-runtime versions; `make scripting` (or `make python`/`make lua`/`make js`/`make awk`)
+drops the interpreted/JIT-scripting launchers. The managed, Lisp, and scripting builds drop
+launcher scripts / native executables into `bin/` named `cppgrep_std*`, `jgrep_std*`, `csgrep_std*`,
+`ktgrep_std*`, `cljgrep_std*`, `clgrep_std*`, `odingrep_std*`, `dgrep_std*`, `pygrep_std*`,
+`ljgrep_std*`, `nodegrep_std*`/`bungrep_std*`/`denogrep_std*`, `awkgrep_std` (suffixes: `_mt` naive
 threads, `_mt_tuned` reused-buffer + prefix-check).
 
 ## Build & run
@@ -155,6 +169,11 @@ make csharp-aot  # C# NativeAOT     (needs `dotnet-sdk` + clang/lld; true native
 make kotlin      # Kotlin           (needs `kotlinc`)
 make clojure     # Clojure          (needs `lein`; AOT'd uberjars)
 make jvm         # java + kotlin + clojure
+make python      # Python           (needs `python3`)
+make lua         # LuaJIT           (needs `luajit`)
+make js          # JavaScript       (needs `node`; bun/deno launchers too)
+make awk         # GNU awk          (needs `gawk` with readdir/filefuncs extensions)
+make scripting   # python + lua + js + awk
 
 bin/asmgrep -ri ontology /path/to/repo
 
