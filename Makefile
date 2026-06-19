@@ -277,6 +277,19 @@ $(BIN)/exgrep_std: elixir/grep_std.exs elixir/grep_mt.exs elixir/grep_mt_tuned.e
 	printf '#!/bin/sh\nexec elixir $(CURDIR)/elixir/grep_mt_tuned.exs -- "$$@"\n' > $(BIN)/exgrep_std_mt_tuned
 	chmod +x $(BIN)/exgrep_std $(BIN)/exgrep_std_mt $(BIN)/exgrep_std_mt_tuned
 
+# Swift: swiftc -O -> native LLVM binary, but with ARC (a THIRD memory model --
+# neither tracing-GC nor manual malloc/free). Startup is a hair above the C/D
+# cluster because the Swift runtime (libswiftCore/libdispatch) is shared-lib-linked.
+# memmem() literal scan via Glibc; _mt = GCD concurrentPerform, _mt_tuned = pthread
+# pool (each worker needs a stable identity to own its reused scratch buffer).
+swift: $(BIN)/swiftgrep_std $(BIN)/swiftgrep_std_mt $(BIN)/swiftgrep_std_mt_tuned
+$(BIN)/swiftgrep_std: swift/grep_std.swift | $(BIN)
+	swiftc -O -o $@ $<
+$(BIN)/swiftgrep_std_mt: swift/grep_mt.swift | $(BIN)
+	swiftc -O -o $@ $<
+$(BIN)/swiftgrep_std_mt_tuned: swift/grep_mt_tuned.swift | $(BIN)
+	swiftc -O -o $@ $<
+
 # Common Lisp (SBCL): save-lisp-and-die -> standalone native executables
 # (~4 ms startup; full runtime embedded, so binaries are large).
 lisp: $(BIN)/clgrep_std $(BIN)/clgrep_std_mt $(BIN)/clgrep_std_mt_tuned
@@ -312,4 +325,4 @@ compare: all
 clean:
 	rm -rf $(BIN)
 
-.PHONY: all asm c zig test bench compare clean java kotlin clojure jvm odin lisp haskell ocaml pascal ada fortran d csharp-aot cpp python awk lua js scripting graalvm crystal elixir
+.PHONY: all asm c zig test bench compare clean java kotlin clojure jvm odin lisp haskell ocaml pascal ada fortran d csharp-aot cpp python awk lua js scripting graalvm crystal elixir swift

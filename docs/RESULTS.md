@@ -645,6 +645,34 @@ The pair is the thesis in miniature: **two GC'd languages, ~440× apart on start
 sorted entirely by runtime model** — native-AOT-with-GC vs a bytecode VM that boots a whole actor
 runtime per invocation. GC was never the variable.
 
+## Swift: a third memory model — ARC (2026-06-20)
+
+Swift is native LLVM code (`swiftc -O`) but neither GC'd nor manually managed — it uses **ARC
+(automatic reference counting)**, a third memory model. 48/48 vs grep.
+
+| repo | std | mt | tuned | grep |
+|---|--:|--:|--:|--:|
+| navidrome | 43.6 | 25.1 | **13.6** | 15.6 |
+| cognee | 183 | 158 | **69.1** | 24.4 |
+| immich | 591 | 555 | **158** | 47.9 |
+
+Startup **2.5 ms** — in the native cluster (two orders of magnitude below JVM/BEAM), just above C
+(~0.5 ms) and D (~1.0 ms) only because the Swift runtime (`libswiftCore`/`libdispatch`) is
+dynamically linked, not because of any per-process VM. The headline: **ARC doesn't block the memory
+pillar.** A worker that owns its mutable `[UInt8]` and only grows it is the sole reference, so
+copy-on-write never fires and the reused buffer + 64 KB prefix-check behaves exactly like the C/D
+versions — the single biggest win, taking immich 591 → 158 ms (3.7×) by never faulting in big
+binaries it then skips, and tuned-MT actually *beats* grep on navidrome (13.6 vs 15.6). Single-threaded
+Swift trails the C/D cluster (navidrome 43.6 vs grep 15.6 ms) — ARC retain/release traffic and Array
+bounds-checking surface here — but the gap is modest, not catastrophic, because the hot work runs in
+`withUnsafeBufferPointer` over raw pointers and the scan is Glibc `memmem` (Foundation's
+`Data.range(of:)` boxes bytes through Collection and is markedly slower — the idiomatic-but-slow trap,
+avoided). One structural wrinkle: `_mt` uses GCD `DispatchQueue.concurrentPerform` (one closure per
+file), but `_mt_tuned` drops to a fixed **pthread pool** — per-worker buffer ownership needs a stable
+thread identity that GCD's transient task closures don't provide. So a third memory model, same result:
+once buffer-reuse + parallelism are applied, Swift is grep-competitive; the language was never the
+variable.
+
 ## Optimizations implemented
 
 | technique | effect |

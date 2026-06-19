@@ -9,7 +9,7 @@ repositories it runs **~3× faster than GNU grep and ~2× faster than ripgrep**
 This repo is also an **experiment**: the same program is reimplemented in **C**,
 **C++**, **Zig**, **Go**, **Rust**, **Odin**, **D**, **Java**, **C#**, **Kotlin**, **Clojure**,
 **Common Lisp**, **Haskell**, **OCaml**, **FreePascal**, **Ada**, **Fortran**,
-**Python**, **JavaScript**, **LuaJIT**, **awk**, **Crystal**, and **Elixir** —
+**Python**, **JavaScript**, **LuaJIT**, **awk**, **Crystal**, **Elixir**, and **Swift** —
 both *hand-optimized* (same syscall strategy, SIMD, parallel walker)
 and *idiomatic stdlib*. The question: *did writing it in assembly buy any of the speed,
 or was it the engineering all along?* **Answer below; the short version is: within the
@@ -44,7 +44,7 @@ Geomean slowdown vs the hand-written assembly, `-ri error`, 10 repos, 6 cores
 | **idiomatic** + naive threads (C / Zig / Go / Rust) | ~9.7× |
 | **idiomatic** + threads + reused buffer + prefix binary-check | **C 3.2× / Zig 2.8× / Go 4.4× / Rust 2.4×** |
 
-Nineteen more languages were added later (consistent single-pass benchmark, see RESULTS.md) — and
+Twenty more languages were added later (consistent single-pass benchmark, see RESULTS.md) — and
 they sort by **runtime model**, not syntax:
 
 | implementation | character |
@@ -67,6 +67,7 @@ they sort by **runtime model**, not syntax:
 | **Python** (CPython 3.14, GIL) | C-backed `bytes.find` keeps `_std` at ~5× grep; the shipped `multiprocessing.Pool` `_mt` *regresses* — but that's the **library pickling results over pipes**, not the language: a raw `os.fork` pool (no IPC, LuaJIT's model) is **3–4× faster and ties LuaJIT** (immich 59 vs 46 ms). The scripting tier sorts by *which concurrency primitive is idiomatic*, not language/JIT |
 | **awk** (gawk, `index()`) | the text-DSL built for exactly this — yet **80–350× grep** and *widening* with tree size, because no threads = no concurrency pillar to recover the interpreted-scan loss. `_std` only (the missing `_mt` is the finding) |
 | **Crystal** (LLVM, native + GC) | Ruby-like syntax, native ELF: **1.09 ms** startup (native cluster, ≈ D/OCaml). Mutable `Bytes` ⇒ buffer-reuse pillar works, tuned-MT ~**3.0–3.5× grep**. Real MT needs `-Dpreview_mt` + `CRYSTAL_WORKERS` |
+| **Swift** (swiftc -O, native + ARC) | native LLVM but **ARC** — a third memory model (not GC, not manual): ~**2.5 ms** startup (native cluster; just above C/D as the runtime is shared-lib-linked). ARC/CoW lets the reused buffer work, so tuned-MT dominates (immich 591→158) and *beats grep on small trees*; single-threaded trails C/D (ARC retain/release + bounds checks) |
 | **Elixir** (BEAM/ERTS VM) | the exotic VM and the **slowest-starting runtime in the set**: ~**480 ms** ERTS boot dominates every short run (past Clojure's ~450 ms). `:binary.match` (C BIF) carries the scan and `Task.async_stream` maps parallelism cleanly, but immutable binaries forbid buffer reuse (like Haskell) — lands 15–60× grep, startup-bound |
 
 ### 1. The language barely matters *(within the compiled tier)*
@@ -136,6 +137,7 @@ lua/              LuaJIT (2.1, FFI POSIX walk + string.find; _mt forks workers),
 awk/              GNU awk (readdir walk + index() scan), 1 variant (no threads)
 crystal/          Crystal (LLVM native + GC; Ruby-ish), 3 variants (_mt needs -Dpreview_mt)
 elixir/           Elixir (BEAM VM; :binary.match + Task.async_stream), 3 variants
+swift/            Swift (swiftc -O native + ARC; memmem scan + GCD/pthread MT), 3 variants
 bench/            iouring_probe.c and friends
 docs/RESULTS.md   full benchmark numbers + methodology
 tests/            run.sh (correctness vs grep), verify_impl.sh (any binary vs grep),
@@ -184,6 +186,7 @@ make awk         # GNU awk          (needs `gawk` with readdir/filefuncs extensi
 make scripting   # python + lua + js + awk
 make crystal     # Crystal native   (needs `crystal`; _mt uses -Dpreview_mt + CRYSTAL_WORKERS)
 make elixir      # Elixir           (needs `elixir`; BEAM VM)
+make swift       # Swift native     (needs `swiftc`; native LLVM + ARC)
 
 bin/asmgrep -ri ontology /path/to/repo
 
