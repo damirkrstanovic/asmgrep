@@ -115,6 +115,18 @@ $(BIN)/fortgrep_std_mt: fortran/grep_mt.f90 | $(BIN)
 $(BIN)/fortgrep_std_mt_tuned: fortran/grep_mt_tuned.f90 | $(BIN)
 	mkdir -p fortran/build/tuned && gfortran -O2 -fopenmp -J fortran/build/tuned fortran/grep_mt_tuned.f90 -o $@
 
+# D: dmd native compiler -> native binaries, like C/Zig/Pascal (GC runtime, but
+# no per-process VM startup). Three variants (idiomatic / +threads / +tuned);
+# the tuned worker reuses one buffer + prefix-checks like the others.
+DMD := dmd -O -release -inline
+d: $(BIN)/dgrep_std $(BIN)/dgrep_std_mt $(BIN)/dgrep_std_mt_tuned
+$(BIN)/dgrep_std: d/grep_std.d | $(BIN)
+	$(DMD) -of=$@ d/grep_std.d && rm -f d/grep_std.o
+$(BIN)/dgrep_std_mt: d/grep_mt.d | $(BIN)
+	$(DMD) -of=$@ d/grep_mt.d && rm -f d/grep_mt.o
+$(BIN)/dgrep_std_mt_tuned: d/grep_mt_tuned.d | $(BIN)
+	$(DMD) -of=$@ d/grep_mt_tuned.d && rm -f d/grep_mt_tuned.o
+
 # ----------------------------------------------------------------------------
 # Hosted / JVM languages: compile to bytecode, run via `java`. A tiny launcher
 # script is (re)generated into bin/ (which is git-ignored) by each rule.
@@ -166,6 +178,18 @@ $(BIN)/clgrep_std_mt: lisp/grep_mt.lisp lisp/build_mt.lisp | $(BIN)
 $(BIN)/clgrep_std_mt_tuned: lisp/grep_mt_tuned.lisp lisp/build_mt_tuned.lisp | $(BIN)
 	sbcl --non-interactive --load lisp/build_mt_tuned.lisp
 
+# C# NativeAOT (modern .NET): `dotnet publish -p:PublishAot` -> a true
+# native ELF (no VM, ~1.6 ms startup), RyuJIT-quality AOT codegen + the vectorized
+# `ReadOnlySpan<byte>.IndexOf` SIMD scan. One shared project; StartupObject picks
+# the variant. Needs `dotnet` (dotnet-sdk) + clang/lld for the AOT linker.
+DOTNET := DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 dotnet
+AOTPUB := publish csharp/aot/grep.csproj -c Release -r linux-x64 --nologo
+csharp-aot: $(BIN)/csgrep_aot_std
+$(BIN)/csgrep_aot_std: csharp/aot/Common.cs csharp/aot/GrepStd.cs csharp/aot/GrepMt.cs csharp/aot/GrepMtTuned.cs csharp/aot/grep.csproj | $(BIN)
+	$(DOTNET) $(AOTPUB) -p:StartupObject=GrepStd     -o csharp/aot/out_std      && cp csharp/aot/out_std/grep      $(BIN)/csgrep_aot_std
+	$(DOTNET) $(AOTPUB) -p:StartupObject=GrepMt       -o csharp/aot/out_mt       && cp csharp/aot/out_mt/grep       $(BIN)/csgrep_aot_std_mt
+	$(DOTNET) $(AOTPUB) -p:StartupObject=GrepMtTuned  -o csharp/aot/out_mt_tuned && cp csharp/aot/out_mt_tuned/grep $(BIN)/csgrep_aot_std_mt_tuned
+
 $(BIN):
 	mkdir -p $(BIN)
 
@@ -179,4 +203,4 @@ compare: all
 clean:
 	rm -rf $(BIN)
 
-.PHONY: all asm c zig test bench compare clean java kotlin clojure jvm odin lisp haskell ocaml pascal ada fortran
+.PHONY: all asm c zig test bench compare clean java kotlin clojure jvm odin lisp haskell ocaml pascal ada fortran d csharp-aot

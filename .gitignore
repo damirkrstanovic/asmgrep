@@ -25,6 +25,13 @@
 # Fortran (gfortran) module intermediates (binaries land in bin/)
 /fortran/build/
 *.mod
+# C# NativeAOT (dotnet) build + publish output (sources + csproj tracked)
+/csharp/aot/bin/
+/csharp/aot/obj/
+/csharp/aot/out_std/
+/csharp/aot/out_mt/
+/csharp/aot/out_mt_tuned/
+/csharp/aot/out_std_hand/
 
 # scratch A/B checkpoints (gold = mmap build, read = read() build)
 *.gold

@@ -330,6 +330,54 @@ process that launches, scans, and exits in milliseconds — JVM startup is a str
 no in-program engineering removes, and Clojure's runtime-init constant puts it in a class of
 its own (~0.5 s before any repo is large enough to amortize it).
 
+## Two more: D and C# (2026-06-19)
+
+Two more *compiled* languages — but the interesting contrast turned out to be scan-codegen
+quality, not native-vs-managed. Each in the same three tiers:
+
+- **D** (`d/`, `dmd -O -release -inline` → native binary with a GC runtime) — the C/Zig/Odin/
+  FreePascal cluster; reference compiler, hand-rolled scalar scan (no stdlib `memmem`).
+- **C#** (`csharp/aot/`, **.NET 10 NativeAOT**, `dotnet publish -p:PublishAot` → a true native
+  ELF, no VM) — RyuJIT-quality AOT codegen + the BCL's vectorized `ReadOnlySpan<byte>.IndexOf`.
+
+All 6 are byte-for-byte identical to `grep` (`tests/verify_impl.sh`, 16 cases each = 96/96).
+
+*Directional numbers* (warm cache, `-ri error /usr/include`, 96k files, i5-8400 6-core — a
+**different corpus** from the tables above, so compare the columns to each other, not across
+sections; startup is the single-file figure):
+
+| implementation | startup | std | +threads | +tuned | vs grep (0.92 s) |
+|---|--:|--:|--:|--:|--:|
+| **D** | 0.8 ms | 5.96 s | 2.20 s | **1.18 s** | 1.3× |
+| **C#** (NativeAOT) | 1.6 ms | 2.52 s | 2.52 s | 2.52 s | ~2.7× |
+
+1. **D confirms the native thesis once more.** Sub-ms startup (0.8 ms, in the C/Zig/Pascal
+   band), and because D's arrays are *mutable* the buffer-reuse pillar applies: tuned-MT scales
+   ~5× over single-threaded (5.96 → 1.18 s) and lands within ~1.3× of GNU grep. The
+   single-threaded scan carries the now-familiar hand-rolled-search tax (no stdlib `memmem`).
+2. **C# (NativeAOT) does the *least total work* of anything here — and that's why threading is
+   moot.** Sub-2 ms startup (true native ELF, no VM). Its three tiers are a **dead heat** (std =
+   naive-mt = tuned-mt = 2.52 s) at ~100% of *one* core — not because threading is broken (a
+   pure-CPU probe scales 6 threads ≈ 1×), but because the vectorized `Span.IndexOf` scan made the
+   program **stop being scan-bound**. The decisive test — 454 MB across 12 big files (trivial
+   walk), case-sensitive (no lowercase pass):
+
+   | impl | wall | user (CPU) | reading |
+   |---|--:|--:|---|
+   | **C#-AOT std** | 189 ms | **77 ms** | scan = 5.9 GB/s, only ~40% of wall; the rest is `read()` syscall time (113 ms sys) |
+   | **C#-AOT tuned-mt** | 187 ms | 77 ms | identical — nothing left to parallelize |
+   | **D tuned-mt** | 259 ms | **610 ms** | genuinely uses ~4 cores, yet *slower* — its scalar scan burns **8× the CPU** |
+   | GNU grep | 329 ms | 287 ms | single-threaded |
+
+   So NativeAOT C# scans 454 MB in **77 ms of CPU**, lands *ahead of D* and near grep, and "can't
+   parallelize" only because — exactly like grep itself — a SIMD scan turns this into an I/O-bound
+   job. The memory pillar is moot here: with a vectorized scan, **I/O / per-file syscall overhead
+   is the floor**, just as it is for the native C/Zig tier. Within AOT, swapping the SIMD scan
+   back for the same hand-rolled scalar loop (the `#if HANDROLLED` control in `csharp/aot/Common.cs`)
+   costs ~1.6× (2.52 → 4.09 s on `/usr/include`) — confirming the *algorithm*, not the runtime,
+   was the remaining gap. Built with `make csharp-aot` (needs `dotnet-sdk` + clang/lld);
+   `csgrep_aot_std{,_mt,_mt_tuned}`.
+
 ## Optimizations implemented
 
 | technique | effect |

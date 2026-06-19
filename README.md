@@ -7,7 +7,7 @@ repositories it runs **~3× faster than GNU grep and ~2× faster than ripgrep**
 (geomean, aligned flags), with byte-for-byte identical results.
 
 This repo is also an **experiment**: the same program is reimplemented in **C**,
-**Zig**, **Go**, **Rust**, **Odin**, **Java**, **Kotlin**, **Clojure**,
+**Zig**, **Go**, **Rust**, **Odin**, **D**, **Java**, **C#**, **Kotlin**, **Clojure**,
 **Common Lisp**, **Haskell**, **OCaml**, **FreePascal**, **Ada**, and **Fortran** —
 both *hand-optimized* (same syscall strategy, SIMD, parallel walker)
 and *idiomatic stdlib*. The question: *did writing it in assembly buy any of the speed,
@@ -40,12 +40,14 @@ Geomean slowdown vs the hand-written assembly, `-ri error`, 10 repos, 6 cores
 | **idiomatic** + naive threads (C / Zig / Go / Rust) | ~9.7× |
 | **idiomatic** + threads + reused buffer + prefix binary-check | **C 3.2× / Zig 2.8× / Go 4.4× / Rust 2.4×** |
 
-Ten more languages were added later (consistent single-pass benchmark, see RESULTS.md) — and
+Twelve more languages were added later (consistent single-pass benchmark, see RESULTS.md) — and
 they sort by **runtime model**, not syntax:
 
 | implementation | character |
 |---|---|
 | **Odin** (compiled, native) | lands in the C/Zig idiomatic cluster (~3.5× single-threaded); sub-ms startup |
+| **D** (dmd, native + GC) | **0.8 ms** startup — lands squarely in the native compiled tier; mutable arrays ⇒ the buffer-reuse pillar works, so tuned-MT scales ~5× and lands within ~1.3× of GNU grep; hand-rolled-search algorithm tax single-threaded |
+| **C#** (.NET 10 NativeAOT) | true native ELF, **1.6 ms** startup (no VM); vectorized `Span<byte>.IndexOf` scans 454 MB in **77 ms of CPU (5.9 GB/s)** — *less total work than anything else here*, landing ahead of D and near grep. Threading then buys nothing because, like grep itself, it's no longer scan-bound — I/O / per-file syscalls become the floor (see RESULTS.md) |
 | **Common Lisp** (SBCL native image) | ~3.4 ms startup, tuned-MT scan on par with GNU grep — a dynamic language that performs like a systems one |
 | **Haskell** (GHC, native + RTS) | ~17 ms startup; immutable `ByteString` *forbids* the buffer-reuse pillar, so it's pinned in the allocation-heavy regime (~1.5× threading) |
 | **OCaml** (ocamlopt+flambda, Domains) | 1.0 ms startup; mutable `Bytes` ⇒ buffer reuse works, tuned-MT scales ~3.8×; slow single-threaded scan (hand-rolled search, no stdlib `memmem`) — flambda+`-O3` bought only ~9%, so it's the algorithm, not the compiler |
@@ -103,7 +105,9 @@ zig/grep_std_mt.zig  Zig, idiomatic + std.Thread (multithreaded)
 go/mt/main.go     Go, idiomatic + goroutines     (multithreaded)
 rust/             Rust, idiomatic walkdir+rayon+memchr (parallel; ripgrep's crates)
 odin/             Odin, 3 variants (native compiled, like C/Zig)
+d/                D (dmd native, GC runtime), 3 variants
 java/             Java (JDK), 3 variants (idiomatic / +threads / +tuned)
+csharp/aot/       C# (.NET 10 NativeAOT, true native ELF + SIMD), 3 variants
 kotlin/           Kotlin (JVM), 3 variants
 clojure/          Clojure (JVM, AOT'd uberjars via Leiningen), 3 variants
 lisp/             Common Lisp (SBCL save-lisp-and-die native images), 3 variants
@@ -120,11 +124,12 @@ bin/              build output (git-ignored): native binaries + JVM launcher scr
 ```
 
 `make all` builds asm + C; `make c`/`make zig`/`make cstd`/`make zigstd`/`make go`/
-`make odin`/`make lisp` build the native rest; `make java`/`make kotlin`/`make clojure`
-(or `make jvm` for all three) build the JVM versions. The JVM and Lisp builds drop
-launcher scripts / native executables into `bin/` named `jgrep_std*`, `ktgrep_std*`,
-`cljgrep_std*`, `clgrep_std*`, `odingrep_std*` (suffixes: `_mt` naive threads,
-`_mt_tuned` reused-buffer + prefix-check).
+`make odin`/`make d`/`make lisp` build the native rest; `make java`/`make csharp`/
+`make kotlin`/`make clojure` (or `make jvm` for the three JVM ones) build the
+managed-runtime versions. The managed and Lisp builds drop launcher scripts /
+native executables into `bin/` named `jgrep_std*`, `csgrep_std*`, `ktgrep_std*`,
+`cljgrep_std*`, `clgrep_std*`, `odingrep_std*`, `dgrep_std*` (suffixes: `_mt` naive
+threads, `_mt_tuned` reused-buffer + prefix-check).
 
 ## Build & run
 
@@ -135,6 +140,7 @@ make zig         # builds the Zig version      -> bin/zgrep   (needs `zig`)
 make all         # asm + C
 
 make odin        # Odin native      (needs `odin`)
+make d           # D native         (needs `dmd`)
 make lisp        # Common Lisp      (needs `sbcl`; native saved images)
 make haskell     # Haskell          (needs `ghc`; native + threaded RTS)
 make ocaml       # OCaml            (needs `ocamlopt`; OCaml-5 Domains)
@@ -142,6 +148,7 @@ make pascal      # Free Pascal      (needs `fpc`)
 make ada         # Ada             (needs `gnatmake`)
 make fortran     # Fortran         (needs `gfortran`; OpenMP for MT)
 make java        # Java             (needs JDK `javac`/`java`)
+make csharp-aot  # C# NativeAOT     (needs `dotnet-sdk` + clang/lld; true native ELF)
 make kotlin      # Kotlin           (needs `kotlinc`)
 make clojure     # Clojure          (needs `lein`; AOT'd uberjars)
 make jvm         # java + kotlin + clojure
