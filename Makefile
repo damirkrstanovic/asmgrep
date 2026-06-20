@@ -234,6 +234,26 @@ $(BIN)/cljgrep_std: clojure/src/cljgrep/grepstd.clj clojure/src/cljgrep/grepmt.c
 	printf '#!/bin/sh\nexec java -jar $(CURDIR)/clojure/target/cljgrep_std_mt_tuned.jar "$$@"\n' > $(BIN)/cljgrep_std_mt_tuned
 	chmod +x $(BIN)/cljgrep_std $(BIN)/cljgrep_std_mt $(BIN)/cljgrep_std_mt_tuned
 
+# GraalVM native-image of the SAME Clojure uberjars -- the "Clojure loop-closer".
+# Clojure is the worst startup case in the repo (~0.45 s JVM runtime-init);
+# AOT-compiling the identical uberjar bytecode to a native ELF drops it into the
+# native cluster. Two requirements made it work: (1) graal-build-time's
+# InitClojureClasses feature (the standard Clojure-on-native-image enabler --
+# bare --initialize-at-build-time freezes Clojure's *out*/runtime state), fetched
+# into clojure/build/; (2) the Clojure sources read via plain java.io, not
+# reflective java.nio, so --no-fallback links with no reflection config. Needs the
+# clojure: uberjars and GraalVM's native-image (GRAALVM_HOME).
+GBT_VER := 1.0.6
+GBT := clojure/build/graal-build-time-$(GBT_VER).jar
+# `=` (deferred) not `:=`: GRAALVM_HOME is defined further down, so expand at use time.
+NI_CLJ = $(GRAALVM_HOME)/bin/native-image --no-fallback -march=native --features=clj_easy.graal_build_time.InitClojureClasses
+$(GBT):
+	mkdir -p clojure/build && curl -fsSL -o $@ https://repo.clojars.org/com/github/clj-easy/graal-build-time/$(GBT_VER)/graal-build-time-$(GBT_VER).jar
+clojure-native: $(BIN)/cljgrep_std $(GBT) | $(BIN)
+	$(NI_CLJ) -cp "clojure/target/cljgrep_std.jar:$(GBT)"          cljgrep.grepstd     -o $(BIN)/cljgraalgrep_std
+	$(NI_CLJ) -cp "clojure/target/cljgrep_std_mt.jar:$(GBT)"       cljgrep.grepmt      -o $(BIN)/cljgraalgrep_std_mt
+	$(NI_CLJ) -cp "clojure/target/cljgrep_std_mt_tuned.jar:$(GBT)" cljgrep.grepmttuned -o $(BIN)/cljgraalgrep_std_mt_tuned
+
 jvm: java kotlin clojure
 
 # GraalVM native-image: AOT-compile the EXISTING java/*.java (UNCHANGED) into a
@@ -390,4 +410,4 @@ compare: all
 clean:
 	rm -rf $(BIN)
 
-.PHONY: all asm c zig test bench compare clean java kotlin clojure jvm odin lisp haskell ocaml pascal ada fortran d csharp-aot cpp python awk lua js scripting graalvm crystal elixir swift red pony nim julia chapel
+.PHONY: all asm c zig test bench compare clean java kotlin clojure jvm odin lisp haskell ocaml pascal ada fortran d csharp-aot cpp python awk lua js scripting graalvm crystal elixir swift red pony nim julia chapel clojure-native

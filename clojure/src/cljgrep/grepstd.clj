@@ -3,11 +3,8 @@
 ;; Mirrors go/grep.go semantics byte-for-byte. Bytes, not Unicode chars.
 (ns cljgrep.grepstd
   (:gen-class)
-  (:import [java.io BufferedOutputStream OutputStream]
-           [java.nio.file Files Path Paths LinkOption]
-           [java.nio.file.attribute BasicFileAttributes]
-           [java.nio.charset StandardCharsets]
-           [java.util.stream Stream]))
+  (:import [java.io BufferedOutputStream OutputStream File FileInputStream]
+           [java.nio.charset StandardCharsets]))
 
 (set! *warn-on-reflection* true)
 (set! *unchecked-math* :warn-on-boxed)
@@ -57,7 +54,7 @@
 
 (defn search-file
   [^OutputStream out ^bytes pat ^bytes lpat ci multi matched ^String path]
-  (let [^"[B" data (try (Files/readAllBytes (Paths/get path (make-array String 0)))
+  (let [^"[B" data (try (with-open [in (FileInputStream. path)] (.readAllBytes in))
                         (catch Exception _ nil))]
     (when data
       (let [len (alength data)
@@ -95,11 +92,21 @@
     (flush))
   (System/exit 2))
 
-(defn walk-dir [search-fn ^Path dir]
-  (with-open [s (Files/walk dir (make-array java.nio.file.FileVisitOption 0))]
-    (doseq [^Path p (-> ^Stream s .iterator iterator-seq)]
-      (when (Files/isRegularFile p (make-array LinkOption 0))
-        (search-fn (.toString p))))))
+;; java.io-only symlink test (avoids reflective java.nio so it works under GraalVM
+;; native-image): canonicalize the parent, re-attach the name, and see if that
+;; resolves elsewhere -- isolates the entry from any symlinked ancestor.
+(defn symlink? [^File f]
+  (let [p (.getParentFile f)
+        g (File. ^File (if p (.getCanonicalFile p) f) (.getName f))]
+    (not= (.getCanonicalFile g) (.getAbsoluteFile g))))
+
+(defn walk-dir [search-fn ^File dir]
+  (when-let [entries (.listFiles dir)]
+    (doseq [^File f entries]
+      (when-not (symlink? f)
+        (cond
+          (.isDirectory f) (walk-dir search-fn f)
+          (.isFile f) (search-fn (.getPath f)))))))
 
 (defn -main [& args]
   (let [ci (atom false)
@@ -133,13 +140,9 @@
           search-fn (fn [path]
                       (search-file out pat lpat @ci multi matched path))]
       (doseq [^String p @paths]
-        (let [pp (Paths/get p (make-array String 0))
-              attrs (try (Files/readAttributes pp BasicFileAttributes
-                                               (make-array LinkOption 0))
-                         (catch Exception _ nil))]
-          (when attrs
-            (if (.isDirectory ^BasicFileAttributes attrs)
-              (when @recursive (walk-dir search-fn pp))
-              (search-fn p)))))
+        (let [f (File. p)]
+          (cond
+            (.isDirectory f) (when @recursive (walk-dir search-fn f))
+            (.isFile f) (search-fn p))))
       (.flush out)
       (System/exit (if @matched 0 1)))))

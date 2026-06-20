@@ -604,6 +604,35 @@ native binaries are ~13.8 MB each — the SubstrateVM runtime is statically embe
 images. Build needs the GraalVM JDK's `native-image`, which ships in the JDK dir, e.g.
 `/usr/lib/jvm/java-25-graalvm-ce/bin`; `make graalvm GRAALVM_HOME=...` points at it.)
 
+### Addendum: the Clojure loop-closer (2026-06-20)
+
+The same trick closes the loop on the repo's *worst* startup case. Clojure's ~0.45 s JVM runtime-init
+(it boots the JVM *and* the Clojure runtime, interning thousands of vars) puts it dead last on startup —
+38.7× grep on the leaderboard. `native-image` the same AOT'd uberjar and:
+
+| | JVM `java -jar` | GraalVM native |
+|---|--:|--:|
+| startup (README.md) | 408.9 ms | **2.9 ms** (141×) |
+| navidrome `-ri error` (tuned) | 547 ms | **101 ms** (~6.5× grep) |
+
+Startup collapses **141×**, dropping Clojure off the startup-bound floor into the **native cluster**
+(~6.5× grep, beside JS/Pony). Same `.clj`, same uberjar bytecode — only the runtime changed: the
+loop-closer, twice.
+
+Clojure-on-native-image is gnarlier than Java's, and two things were needed (both standard for the
+craft — it's how `babashka`/`clj-kondo` ship):
+1. **`graal-build-time`** (the `InitClojureClasses` feature): Clojure's AOT'd classes must initialize at
+   *build* time, but bare `--initialize-at-build-time` over-reaches and freezes `*out*`/runtime state →
+   broken output. The feature marks *only* Clojure's classes.
+2. **Porting the three sources' I/O from reflective `java.nio` to plain `java.io`.** The originals used
+   `Files/readAttributes(path, BasicFileAttributes.class)` + `Files/readAllBytes` — reflective provider
+   lookups that `--no-fallback` rejects (silently caught → every file skipped → 5/16). `File` +
+   `FileInputStream` carry no reflection and are byte-identical on the JVM (still 48/48 there). One last
+   reflective `(.get future)` needed a `^Future` hint — without it the MT variants *hung* under
+   native-image (the exception left the non-daemon pool threads alive). With those, 48/48 native.
+
+`make clojure-native` (needs the `clojure:` uberjars + GraalVM; auto-fetches `graal-build-time`).
+
 ## Crystal and Elixir: native-with-GC vs the BEAM (2026-06-20)
 
 Two more languages, both garbage-collected — and they land at *opposite ends* of the startup

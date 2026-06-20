@@ -89,8 +89,11 @@ binary, vs GNU grep (`-rIiF`, same run). `×grep` < 1 means *faster than grep*.
 the total — which is exactly why the VM/JIT runtimes (Java, Clojure, Elixir, Julia) sit at the bottom.
 On a large tree the scan amortizes their boot and they climb sharply: Julia 47.7× → ~18× on immich,
 Java 17.8× → ~8×, Elixir 43× → ~15×. The top of the board (asm/C/Zig hand-SIMD, then the idiomatic-tuned
-native cluster down through Haskell) is stable across repo sizes. **Nine implementations beat GNU grep;
-the spread top-to-bottom is ~2900×, sorted almost entirely by runtime model.**
+native cluster down through Haskell) is stable across repo sizes. And GraalVM `native-image` *removes*
+the startup tax outright for the two AOT-able JVM languages: that's the **GraalVM** row above (AOT'd
+Java, 1.49×), and `make clojure-native` drops **Clojure 38.7× → ~6.5×** (startup 2.9 ms). **Nine
+implementations beat GNU grep; the spread top-to-bottom is ~2900×, sorted almost entirely by runtime
+model.**
 
 Twenty-five more languages were added later (consistent single-pass benchmark, see RESULTS.md) — and
 they sort by **runtime model**, not syntax:
@@ -108,7 +111,7 @@ they sort by **runtime model**, not syntax:
 | **Ada** (GNAT, tasks) | 0.60 ms startup; per-task buffer reuse scales ~3.5×; hand-rolled scalar search ⇒ slow single-threaded |
 | **Fortran** (gfortran, OpenMP) | 0.80 ms startup; built-in `index()` substring search ⇒ ~2× faster single-threaded than Ada, and tuned-MT *ties GNU grep*; walk needs `iso_c_binding` opendir/readdir |
 | **Java / Kotlin** (JVM, bare `java`) | ~30–41 ms fixed startup; on short jobs the JIT never warms and threads make it *worse* (tuned-MT slower than single-threaded) |
-| **Clojure** (JVM, AOT) | ~0.45 s runtime-init constant before any work — in a class of its own |
+| **Clojure** (JVM, AOT) | ~0.45 s runtime-init constant before any work — in a class of its own. But `make clojure-native` (GraalVM native-image of the *same* uberjar) drops startup **141× to 2.9 ms** and Clojure into the native cluster (~6.5× grep) — the loop-closer applies to Clojure too (needs `graal-build-time` + a java.nio→java.io port; see RESULTS.md) |
 | **GraalVM** `native-image` (the *same* Java, AOT'd) | the **loop-closer**: AOT-compiling the **unchanged** Java bytecode to a native ELF drops startup **30.6 → 2.4 ms** *and* makes tuned-MT actually scale (immich **9.4×** over single-threaded vs bare-`java`'s 1.8×), landing within ~1.4× grep. Proof the JVM tax was the **runtime** (startup + JIT-warmup on a short process), not the language or the code |
 | **LuaJIT** (2.1) | tuned-MT **ties grep** (~1.1×) at **2.6 ms** startup — but *not* because of the JIT: `luajit -joff` changes the time by 1.01×, because `string.find` is a C call (`memchr`/`memcmp`), same as CPython's `bytes.find`. It reaches the native cluster via **cheap `fork()` parallelism + sub-3 ms startup**, not trace compilation (verified — see RESULTS.md). No threads ⇒ `_mt` forks workers (each `flock()`s its output) |
 | **JavaScript** (node/bun/deno, one `.mjs`) | V8/JSC JIT; node/deno startup is **JVM-class** (~32–33 ms) so they don't escape the short-process tax — but **bun does** (8.6 ms). Unlike the JVM, `worker_threads` *scales* (mutable `Buffer` ⇒ pillar 2 works): tuned-MT ~4.4× grep |
@@ -264,6 +267,8 @@ make clojure     # Clojure          (needs `lein`; AOT'd uberjars)
 make jvm         # java + kotlin + clojure
 make graalvm     # GraalVM native-image of the SAME java/ sources (needs GraalVM JDK;
                  #   point GRAALVM_HOME at it, e.g. /usr/lib/jvm/java-25-graalvm-ce)
+make clojure-native # GraalVM native-image of the SAME Clojure uberjars (the "Clojure
+                 #   loop-closer": ~0.45 s startup -> 2.9 ms). Needs `make clojure` first + GraalVM
 make python      # Python           (needs `python3`)
 make lua         # LuaJIT           (needs `luajit`)
 make js          # JavaScript       (needs `node`; bun/deno launchers too)

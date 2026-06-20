@@ -6,11 +6,8 @@
 ;; and flushed under a lock so files don't interleave.
 (ns cljgrep.grepmttuned
   (:gen-class)
-  (:import [java.io BufferedOutputStream ByteArrayOutputStream InputStream OutputStream]
-           [java.nio.file Files Path Paths LinkOption]
-           [java.nio.file.attribute BasicFileAttributes]
+  (:import [java.io BufferedOutputStream ByteArrayOutputStream InputStream OutputStream File FileInputStream]
            [java.nio.charset StandardCharsets]
-           [java.util.stream Stream]
            [java.util ArrayList]
            [java.util.concurrent Executors ExecutorService TimeUnit]
            [java.util.concurrent.atomic AtomicBoolean AtomicInteger]))
@@ -84,13 +81,13 @@
 ;; returns true if matched; writes output into w. Reuses buffers via `state`.
 (defn search-file
   [^ByteArrayOutputStream w ^objects state ^bytes pat ^bytes lpat ci multi ^String path]
-  (let [pp (Paths/get path (make-array String 0))
-        size (try (Files/size pp) (catch Exception _ -1))]
+  (let [f (File. path)
+        size (if (.isFile f) (.length f) -1)]
     (if (< size 0)
       false
       (let [size (long size)
             peek (min size PEEK)]
-        (with-open [in (Files/newInputStream pp (make-array java.nio.file.OpenOption 0))]
+        (with-open [in (FileInputStream. f)]
           ;; ensure read buffer holds at least the prefix
           (aset state RBUF (ensure-cap (aget state RBUF) peek))
           (let [^bytes rbuf0 (aget state RBUF)]
@@ -148,11 +145,19 @@
     (flush))
   (System/exit 2))
 
-(defn collect [^ArrayList files ^Path dir]
-  (with-open [s (Files/walk dir (make-array java.nio.file.FileVisitOption 0))]
-    (doseq [^Path p (-> ^Stream s .iterator iterator-seq)]
-      (when (Files/isRegularFile p (make-array LinkOption 0))
-        (.add files (.toString p))))))
+;; java.io-only symlink test (no reflective java.nio, so it works under native-image)
+(defn symlink? [^File f]
+  (let [p (.getParentFile f)
+        g (File. ^File (if p (.getCanonicalFile p) f) (.getName f))]
+    (not= (.getCanonicalFile g) (.getAbsoluteFile g))))
+
+(defn collect [^ArrayList files ^File dir]
+  (when-let [entries (.listFiles dir)]
+    (doseq [^File f entries]
+      (when-not (symlink? f)
+        (cond
+          (.isDirectory f) (collect files f)
+          (.isFile f) (.add files (.getPath f)))))))
 
 (defn -main [& args]
   (let [ci (atom false)
@@ -189,14 +194,10 @@
           any-match (AtomicBoolean. false)
           files (ArrayList.)]
       (doseq [^String p @paths]
-        (let [pp (Paths/get p (make-array String 0))
-              attrs (try (Files/readAttributes pp BasicFileAttributes
-                                               (make-array LinkOption 0))
-                         (catch Exception _ nil))]
-          (when attrs
-            (if (.isDirectory ^BasicFileAttributes attrs)
-              (when @recursive (collect files pp))
-              (.add files p)))))
+        (let [f (File. p)]
+          (cond
+            (.isDirectory f) (when @recursive (collect files f))
+            (.isFile f) (.add files p))))
       (let [nthreads (.availableProcessors (Runtime/getRuntime))
             ^ExecutorService pool (Executors/newFixedThreadPool nthreads)
             n (.size files)
@@ -218,7 +219,8 @@
                                  (.writeTo buf out))))
                            (recur))))))]
         (let [futures (doall (repeatedly nthreads #(.submit pool ^Runnable task)))]
-          (doseq [f futures] (.get f)))
+          ;; ^Future hint: avoids a reflective .get, which fails under native-image
+          (doseq [^java.util.concurrent.Future f futures] (.get f)))
         (.shutdown pool)
         (.awaitTermination pool 1 TimeUnit/MINUTES))
       (.flush out)
