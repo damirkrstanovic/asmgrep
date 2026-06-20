@@ -70,16 +70,20 @@ they sort by **runtime model**, not syntax:
 | **Swift** (swiftc -O, native + ARC) | native LLVM but **ARC** — a third memory model (not GC, not manual): ~**2.5 ms** startup (native cluster; just above C/D as the runtime is shared-lib-linked). ARC/CoW lets the reused buffer work, so tuned-MT dominates (immich 591→158) and *beats grep on small trees*; single-threaded trails C/D (ARC retain/release + bounds checks) |
 | **Elixir** (BEAM/ERTS VM) | the exotic VM and the **slowest-starting runtime in the set**: ~**480 ms** ERTS boot dominates every short run (past Clojure's ~450 ms). `:binary.match` (C BIF) carries the scan and `Task.async_stream` maps parallelism cleanly, but immutable binaries forbid buffer reuse (like Haskell) — lands 15–60× grep, startup-bound |
 
-### 1. The language barely matters *(within the compiled tier)*
+### 1. The language barely matters — the *runtime model* is everything
 
 Within a tier, every language clusters: optimized asm ≈ C ≈ Zig; idiomatic
 C ≈ Zig ≈ Go ≈ Rust (≤ ~1.8× apart). The gap *between* tiers is ~14×. Hand-written
 assembly bought **~nothing** on the actual work — a modern compiler matches it and
-the out-of-order CPU does the register allocation/scheduling anyway. Assembly's only
-real edge is no-libc startup on sub-2 ms inputs. Odin (native) joins this cluster; even
-SBCL's native image is close. The clustering **breaks for JVM runtimes** — there the
-startup + JIT-warmup tax on a short-lived process, not the language or algorithm,
-sets the floor (Java/Kotlin ~30–40 ms, Clojure ~0.45 s). See RESULTS.md.
+the out-of-order CPU does the register allocation/scheduling anyway. Across all 24
+languages the native cluster turns out to be broad and deep: asm / C / Zig / Rust /
+Odin / D / FreePascal / Ada / Fortran, **and** a Ruby-syntax language (Crystal), an
+ARC language (Swift), and even a **dynamic, JIT'd scripting language** — LuaJIT's
+tuned variant *ties grep*. The clustering **breaks only for VM runtimes**: the JVM
+(~30–40 ms) and the BEAM (~480 ms), where startup + JIT-warmup on a short-lived
+process sets the floor. And that floor is the *runtime*, not the language —
+**GraalVM** AOT-compiling the **identical Java bytecode** drops it 30.6 → 2.4 ms and
+straight into the native cluster (row above). See RESULTS.md.
 
 ### 2. Performance is three pillars — and they *interact*
 
@@ -103,6 +107,28 @@ and expect it to scale.
 - **io_uring** batched reads: only 1.1–1.3× on warm-cache files → not worth it (see `bench/`).
 - **Boyer-Moore-Horspool**: 4× *slower* than the SIMD scan for short patterns (latency-bound
   scalar loop) → gated to ≥32-char patterns only.
+
+### 4. Two throughlines from the full 24-language set
+
+**Startup spans ~1000×, sorted purely by runtime model.** FreePascal 0.41 ms · C ~0.5 ·
+Crystal 1.09 · C# 1.6 · Swift 2.5 · LuaJIT 2.6 · SBCL 3.4 · gawk 3.7 (native / native-image) →
+Python 15 · Java 30 · node 32 / deno 33 (interpreter / VM boot) → **Clojure ~450 · Elixir ~480**
+(full VM init). Nothing about *syntax* predicts where a language lands — only how its runtime
+starts and parallelizes.
+
+**It's never the thing you'd first credit.** Every headline result here, once instrumented, turned
+out to be misattributed — and the real cause was always the memory/parallelism strategy, not the
+language:
+- The idiomatic-**C++** tax wasn't the abstractions (`filesystem`/`ifstream`/`format_to` are ~free)
+  — it was a hidden `memset` from `std::vector::resize` zero-filling the buffer before `read()`
+  overwrites it. Fixed with `std::make_unique_for_overwrite` (cpp·std went 1.33× → 1.04× of C).
+- **LuaJIT** ties grep *not* because of the JIT (`luajit -joff` = 1.01×; `string.find` is a C call,
+  like CPython's `bytes.find`) — but because its idiomatic concurrency (`fork`) is nearly free,
+  where Python's (`multiprocessing.Pool`) pickles results over pipes. Give Python the same `os.fork`
+  model and it gets 3–4× faster and ties LuaJIT. The scripting tier sorts by *which concurrency
+  primitive is idiomatic*, not the language or the JIT.
+- The **JVM**'s poor showing was the *runtime*, not the language or the code: **GraalVM** AOT-compiled
+  the identical bytecode into the native cluster (startup −12.7×, threading 1.8× → 9.4×).
 
 ## Layout
 
