@@ -44,6 +44,54 @@ Geomean slowdown vs the hand-written assembly, `-ri error`, 10 repos, 6 cores
 | **idiomatic** + naive threads (C / Zig / Go / Rust) | ~9.7× |
 | **idiomatic** + threads + reused buffer + prefix binary-check | **C 3.2× / Zig 2.8× / Go 4.4× / Rust 2.4×** |
 
+### 🏁 Leaderboard — all 29 languages, best shipped variant
+
+One harness, one repo: `-ri error` on **navidrome (29 MB, warm cache)**, each implementation's fastest
+binary, vs GNU grep (`-rIiF`, same run). `×grep` < 1 means *faster than grep*.
+
+| # | impl | ×grep | startup | tier |
+|--:|---|--:|--:|---|
+| 1 | **C** | **0.23×** | ~0.5 ms | native, hand-SIMD |
+| 2 | **Zig** | **0.27×** | ~0.5 ms | native, hand-SIMD |
+| 3 | **asm** | **0.32×** | ~0.3 ms | freestanding, hand-SIMD |
+| 4 | **Rust** | **0.47×** | ~0.5 ms | native (walkdir+rayon+memchr) |
+| – | _ripgrep_ | _0.52×_ | ~0.5 ms | _reference_ |
+| 5 | **C++** | **0.65×** | ~0.5 ms | native, idiomatic+tuned |
+| 6 | **Go** | **0.81×** | ~0.5 ms | native (goroutines) |
+| 7 | **Swift** | **0.93×** | 2.5 ms | native + ARC |
+| 8 | **Nim** | **0.98×** | 0.7 ms | native (scan-bound) |
+| – | _GNU grep_ | _1.00×_ | ~0.5 ms | _reference_ |
+| 9 | **LuaJIT** | 1.03× | 2.6 ms | JIT scripting (`fork`) |
+| 10 | **D** | 1.24× | 0.8 ms | native + GC |
+| 11 | **GraalVM** | 1.49× | 2.4 ms | native-image (AOT'd Java) |
+| 12 | **OCaml** | 1.56× | 1.0 ms | native (Domains) |
+| 13 | **Common Lisp** | 1.62× | 3.4 ms | SBCL native image |
+| 14 | **Crystal** | 1.87× | 1.1 ms | native + GC |
+| 15 | **Odin** | 2.08× | 0.6 ms | native |
+| 16 | **Ada** | 2.36× | 0.6 ms | native (tasks) |
+| 17 | **Fortran** | 2.44× | 0.8 ms | native (OpenMP) |
+| 18 | **FreePascal** | 2.48× | 0.4 ms | native |
+| 19 | **Pony** | 3.00× | 5.4 ms | native actors (scan-bound) |
+| 20 | **C#** | 3.04× | 1.6 ms | NativeAOT |
+| 21 | **Chapel** | 3.78× | 28 ms | native HPC (scan-bound + qthreads boot) |
+| 22 | **Haskell** | 4.82× | 17 ms | native + RTS |
+| 23 | **JavaScript** | 6.6× | 32 ms | V8 (`worker_threads`) |
+| 24 | **Python** | 10.6× | 15 ms | CPython (multiprocessing) |
+| 25 | **Kotlin** | 16.3× | ~35 ms | JVM — startup-bound |
+| 26 | **Java** | 17.8× | 30 ms | JVM — startup-bound |
+| 27 | **Clojure** | 38.7× | ~450 ms | JVM AOT — startup-bound |
+| 28 | **Elixir** | 43.1× | ~480 ms | BEAM — startup-bound |
+| 29 | **Julia** | 47.7× | ~470 ms | JIT — startup-bound (JIT-compile tax) |
+| 30 | **awk** | 80.7× | 3.7 ms | interpreted (gawk) |
+| 31 | **Red** | 671× | 19 ms | interpreted (Rebol-family) |
+
+**Read it as short-job-weighted.** On a 29 MB tree the scan is small, so *startup* is a big share of
+the total — which is exactly why the VM/JIT runtimes (Java, Clojure, Elixir, Julia) sit at the bottom.
+On a large tree the scan amortizes their boot and they climb sharply: Julia 47.7× → ~18× on immich,
+Java 17.8× → ~8×, Elixir 43× → ~15×. The top of the board (asm/C/Zig hand-SIMD, then the idiomatic-tuned
+native cluster down through Haskell) is stable across repo sizes. **Nine implementations beat GNU grep;
+the spread top-to-bottom is ~2900×, sorted almost entirely by runtime model.**
+
 Twenty-five more languages were added later (consistent single-pass benchmark, see RESULTS.md) — and
 they sort by **runtime model**, not syntax:
 
