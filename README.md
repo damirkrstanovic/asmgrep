@@ -9,7 +9,7 @@ repositories it runs **~3× faster than GNU grep and ~2× faster than ripgrep**
 This repo is also an **experiment**: the same program is reimplemented in **C**,
 **C++**, **Zig**, **Go**, **Rust**, **Odin**, **D**, **Java**, **C#**, **Kotlin**, **Clojure**,
 **Common Lisp**, **Haskell**, **OCaml**, **FreePascal**, **Ada**, **Fortran**,
-**Python**, **JavaScript**, **LuaJIT**, **awk**, **Crystal**, **Elixir**, **Swift**, **Red**, **Pony**, and **Nim** —
+**Python**, **JavaScript**, **LuaJIT**, **awk**, **Crystal**, **Elixir**, **Swift**, **Red**, **Pony**, **Nim**, and **Julia** —
 both *hand-optimized* (same syscall strategy, SIMD, parallel walker)
 and *idiomatic stdlib*. The question: *did writing it in assembly buy any of the speed,
 or was it the engineering all along?* **Answer below; the short version is: within the
@@ -44,7 +44,7 @@ Geomean slowdown vs the hand-written assembly, `-ri error`, 10 repos, 6 cores
 | **idiomatic** + naive threads (C / Zig / Go / Rust) | ~9.7× |
 | **idiomatic** + threads + reused buffer + prefix binary-check | **C 3.2× / Zig 2.8× / Go 4.4× / Rust 2.4×** |
 
-Twenty-three more languages were added later (consistent single-pass benchmark, see RESULTS.md) — and
+Twenty-four more languages were added later (consistent single-pass benchmark, see RESULTS.md) — and
 they sort by **runtime model**, not syntax:
 
 | implementation | character |
@@ -72,6 +72,7 @@ they sort by **runtime model**, not syntax:
 | **Red** (red-lang.org, Rebol-family) | the gnarliest toolchain: **interpreted, 32-bit i386**, no concurrency (→ `_std` only, like gawk). ~19 ms startup but the **slowest scanner** — ~**660× grep** (the interpreted byte-wise `-i` fold dominates; `find` is native C, but the read/walk/fold glue is all interpreter). Gotchas conquered: `quit/return` exit codes, REPL-hang on stdin, `what-dir`≠cwd, no `lowercase` on binary, a broken `system/options/args` (parse `/proc/self/cmdline` by hand), and **case-insensitive words** (a global `NL` silently collided with a local `nl`) |
 | **Pony** (ponyc, native + actors) | the concurrency-safety marquee: actor model, **data-race-free by compile-time design** (reference capabilities), per-actor heaps, ~5 ms startup. Tests whether *advertised* concurrency scales — and it does: std→mt→tuned is monotone (immich **3.2×** over serial), and per-actor heaps let the buffer-reuse pillar work (via libc FFI, since stdlib `File.read` always allocates). Lands ~2–4× grep, held back by a scalar (non-SIMD) scan, not the model |
 | **Nim** (2.2.10, compiles to C → native) | native cluster, **0.71 ms** startup (≈ FreePascal/Crystal). Raw `Thread`+atomic-index concurrency scales and mutable `seq[byte]` buffer reuse maps the pillar — but it's **scan-bound, not fault-bound**: no stdlib `memmem`, so the hand-rolled scalar scan caps it at ~4–5× grep and makes tuned barely beat naive. The algorithm-pillar tax (like Ada/OCaml/Pascal), not the runtime |
+| **Julia** (1.12, JIT) | the two-axis case: mutable `Vector{UInt8}` ⇒ buffer reuse *works* and `Threads.@threads` engages all cores (immich tuned-MT beats std) — but ~**470 ms** startup is ~**326 ms first-call JIT-compile** + ~144 ms boot, and that fixed tax swamps the scan, sorting it into the JVM/BEAM **startup-bound** tier (~18–51× grep). A PackageCompiler sysimage would fix it, exactly as GraalVM did for the JVM. Gotcha: `threadid()` exceeds `nthreads()` under `-t auto` (size per-thread state by `maxthreadid()`) |
 
 ### 1. The language barely matters — the *runtime model* is everything
 
@@ -111,12 +112,13 @@ and expect it to scale.
 - **Boyer-Moore-Horspool**: 4× *slower* than the SIMD scan for short patterns (latency-bound
   scalar loop) → gated to ≥32-char patterns only.
 
-### 4. Two throughlines from the full 27-language set
+### 4. Two throughlines from the full 28-language set
 
 **Startup spans ~1000×, sorted purely by runtime model.** FreePascal 0.41 ms · C ~0.5 · Nim 0.7 ·
 Crystal 1.09 · C# 1.6 · Swift 2.5 · LuaJIT 2.6 · SBCL 3.4 · gawk 3.7 · Pony 5.4 (native / native-image) →
 Python 15 · Red 19 · Java 30 · node 32 / deno 33 (interpreter / VM boot) → **Clojure ~450 ·
-Elixir ~480** (full VM init). Nothing about *syntax* predicts where a language lands — only how its
+Julia ~470 · Elixir ~480** (VM boot / JIT-compile). Julia is the surprise there — ~326 ms of its
+~470 ms is *first-call JIT-compilation of the grep code itself*, not runtime boot. Nothing about *syntax* predicts where a language lands — only how its
 runtime starts and parallelizes.
 
 **It's never the thing you'd first credit.** Every headline result here, once instrumented, turned
@@ -170,6 +172,7 @@ swift/            Swift (swiftc -O native + ARC; memmem scan + GCD/pthread MT), 
 red/              Red (red-lang.org, Rebol-family interpreter; read/binary + find), 1 variant (no threads)
 pony/             Pony (ponyc native, actor model + reference capabilities), 3 variants (std/mt/tuned dirs)
 nim/              Nim (compiles to C → native; Thread+atomic pool, seq[byte] reuse), 3 variants
+julia/            Julia (1.x JIT; Threads.@threads, mutable Vector{UInt8} reuse), 3 variants
 bench/            iouring_probe.c and friends
 docs/RESULTS.md   full benchmark numbers + methodology
 tests/            run.sh (correctness vs grep), verify_impl.sh (any binary vs grep),
@@ -222,6 +225,7 @@ make swift       # Swift native     (needs `swiftc`; native LLVM + ARC)
 make red         # Red              (needs `red`; Rebol-family interpreter, _std only)
 make pony        # Pony native      (needs `ponyc`; actor model. PONYC=~/.local/share/ponyup/bin/ponyc)
 make nim         # Nim native       (needs `nim`; compiles through C, --threads:on)
+make julia       # Julia            (needs `julia`; JIT; _mt uses -t auto)
 
 bin/asmgrep -ri ontology /path/to/repo
 

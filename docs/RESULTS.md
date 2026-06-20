@@ -765,6 +765,46 @@ pillar — the same hand-rolled-search tax as Ada/OCaml/FreePascal, not its comp
 (It's the cleanest demonstration that the memory pillar only pays off once you're fault-bound, not
 scan-bound.)
 
+### Julia — the right runtime model, sorted by its startup tax anyway
+
+**Julia** (1.12) resolves the *opposite* way from the native cluster despite sharing its memory model —
+a two-axis story. 48/48 vs grep.
+
+| repo | std | mt | tuned | grep |
+|---|--:|--:|--:|--:|
+| navidrome | 686 | 807 | 817 | 16.0 |
+| cognee | 892 | 922 | 863 | 25.8 |
+| immich | 1008 | 1054 | **911** | 49.7 |
+
+On the **memory + parallelism** axis it does everything right: `Vector{UInt8}` is mutable, so the tuned
+worker's per-thread reused buffer + 64 KB-prefix binary-check work exactly like C's, and
+`Threads.@threads` engages every core (on immich, tuned-MT's 1317 ms user-CPU across 911 ms wall proves
+real parallelism, and it *does* beat single-threaded there, 911 vs 1008). The scan is fast too —
+`findnext` over `Vector{UInt8}` dispatches to an optimized C `memchr`/Boyer-Moore search, so unlike Nim
+this is **not** scan-bound. But on the **startup/JIT axis** Julia pays the heaviest "time-to-first-X"
+tax in the set after the BEAM: a tiny run is ~470 ms, of which only ~144 ms is interpreter boot —
+**~326 ms is first-call JIT-compilation of the grep code itself**. That fixed cost dwarfs the actual
+scan on every tree here (navidrome's real work finishes in single-digit ms), so Julia sorts into the
+JVM/BEAM **startup-bound tier** (~18–51× grep), not the D/Crystal/OCaml native cluster it resembles
+structurally. The pillars don't get to matter: `_mt`/`_mt_tuned` are usually *slower* than `_std`
+because the parallel scan is too short to amortize the extra JIT-compile of the `@threads` closure plus
+threaded-runtime init (`_mt_tuned` startup ~657 ms vs std's 470) — it only edges ahead on immich, the
+one tree big enough for the tuned memory pillar to pay for itself. (Gotcha worth recording: under
+`-t auto` Julia adds an interactive threadpool, so `Threads.threadid()` can exceed `nthreads()` —
+per-thread state must be sized by `Threads.maxthreadid()`, with `:static` scheduling for stable
+ownership.) **A PackageCompiler sysimage (or 1.12's `juliac` app image) would bake out the ~326 ms
+JIT-compile and drop Julia toward the native cluster — exactly the GraalVM move that rescued the JVM.**
+So Julia confirms the thesis from a new angle: a language with the *right* runtime model for the work
+can still be sorted entirely by its short-process startup tax.
+
+**Concurrency-tier verdict (Pony, Nim, Julia):** all three *advertise* concurrency, and all three
+genuinely map the parallelism + memory pillars — Pony's safe-actor model scales monotonically, Nim's
+thread pool + `seq` reuse scales, Julia's `@threads` + mutable arrays scale. Yet none lands with the
+C/Zig/Rust front-runners, and for **three different reasons**, each a different pillar/tier: Pony and Nim
+are **scan-bound** (scalar search, no SIMD `memmem`), Julia is **startup-bound** (JIT-compile tax). The
+advertised concurrency was never the problem — it worked. Performance was set, as everywhere in this
+repo, by the *other* pillars: the scan algorithm and the runtime's startup model.
+
 ## Optimizations implemented
 
 | technique | effect |

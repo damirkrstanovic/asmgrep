@@ -330,6 +330,17 @@ $(BIN)/nimgrep_std_mt: nim/grep_mt.nim | $(BIN)
 $(BIN)/nimgrep_std_mt_tuned: nim/grep_mt_tuned.nim | $(BIN)
 	nim c -d:release --threads:on -o:$@ nim/grep_mt_tuned.nim
 
+# Julia (1.x JIT): launcher scripts exec `julia` on the source (no compile step).
+# Two axes: Threads.@threads shared-memory parallelism over mutable Vector{UInt8}
+# (=> the buffer-reuse pillar works) AND Julia's startup + first-call JIT-compile
+# latency on a short-lived process (which dominates). _mt/_mt_tuned pass `-t auto`.
+julia: $(BIN)/jlgrep_std
+$(BIN)/jlgrep_std: julia/grep_std.jl julia/grep_mt.jl julia/grep_mt_tuned.jl julia/grep_core.jl | $(BIN)
+	printf '#!/bin/sh\nexec julia --startup-file=no $(CURDIR)/julia/grep_std.jl "$$@"\n'               > $(BIN)/jlgrep_std
+	printf '#!/bin/sh\nexec julia --startup-file=no -t auto $(CURDIR)/julia/grep_mt.jl "$$@"\n'        > $(BIN)/jlgrep_std_mt
+	printf '#!/bin/sh\nexec julia --startup-file=no -t auto $(CURDIR)/julia/grep_mt_tuned.jl "$$@"\n'  > $(BIN)/jlgrep_std_mt_tuned
+	chmod +x $(BIN)/jlgrep_std $(BIN)/jlgrep_std_mt $(BIN)/jlgrep_std_mt_tuned
+
 # Common Lisp (SBCL): save-lisp-and-die -> standalone native executables
 # (~4 ms startup; full runtime embedded, so binaries are large).
 lisp: $(BIN)/clgrep_std $(BIN)/clgrep_std_mt $(BIN)/clgrep_std_mt_tuned
@@ -365,4 +376,4 @@ compare: all
 clean:
 	rm -rf $(BIN)
 
-.PHONY: all asm c zig test bench compare clean java kotlin clojure jvm odin lisp haskell ocaml pascal ada fortran d csharp-aot cpp python awk lua js scripting graalvm crystal elixir swift red pony nim
+.PHONY: all asm c zig test bench compare clean java kotlin clojure jvm odin lisp haskell ocaml pascal ada fortran d csharp-aot cpp python awk lua js scripting graalvm crystal elixir swift red pony nim julia
