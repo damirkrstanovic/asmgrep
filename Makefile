@@ -341,6 +341,20 @@ $(BIN)/jlgrep_std: julia/grep_std.jl julia/grep_mt.jl julia/grep_mt_tuned.jl jul
 	printf '#!/bin/sh\nexec julia --startup-file=no -t auto $(CURDIR)/julia/grep_mt_tuned.jl "$$@"\n'  > $(BIN)/jlgrep_std_mt_tuned
 	chmod +x $(BIN)/jlgrep_std $(BIN)/jlgrep_std_mt $(BIN)/jlgrep_std_mt_tuned
 
+# Chapel (chpl, native LLVM + qthreads runtime): the HPC parallelism-FIRST entry.
+# `forall` makes the data-parallel-for a language primitive; `with (var ...)` task
+# intents hand each task its own reused buffer (the buffer-reuse pillar as one
+# keyword). Both map cleanly -- but a scalar stdlib bytes.find (no memmem) and a
+# ~28 ms qthreads-runtime startup keep it mid-pack. --fast = optimized release.
+CHPL ?= chpl
+chapel: $(BIN)/chplgrep_std $(BIN)/chplgrep_std_mt $(BIN)/chplgrep_std_mt_tuned
+$(BIN)/chplgrep_std: chapel/grep_std.chpl | $(BIN)
+	$(CHPL) --fast -o $@ $<
+$(BIN)/chplgrep_std_mt: chapel/grep_mt.chpl | $(BIN)
+	$(CHPL) --fast -o $@ $<
+$(BIN)/chplgrep_std_mt_tuned: chapel/grep_mt_tuned.chpl | $(BIN)
+	$(CHPL) --fast -o $@ $<
+
 # Common Lisp (SBCL): save-lisp-and-die -> standalone native executables
 # (~4 ms startup; full runtime embedded, so binaries are large).
 lisp: $(BIN)/clgrep_std $(BIN)/clgrep_std_mt $(BIN)/clgrep_std_mt_tuned
@@ -376,4 +390,4 @@ compare: all
 clean:
 	rm -rf $(BIN)
 
-.PHONY: all asm c zig test bench compare clean java kotlin clojure jvm odin lisp haskell ocaml pascal ada fortran d csharp-aot cpp python awk lua js scripting graalvm crystal elixir swift red pony nim julia
+.PHONY: all asm c zig test bench compare clean java kotlin clojure jvm odin lisp haskell ocaml pascal ada fortran d csharp-aot cpp python awk lua js scripting graalvm crystal elixir swift red pony nim julia chapel

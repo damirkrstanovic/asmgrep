@@ -797,13 +797,40 @@ JIT-compile and drop Julia toward the native cluster — exactly the GraalVM mov
 So Julia confirms the thesis from a new angle: a language with the *right* runtime model for the work
 can still be sorted entirely by its short-process startup tax.
 
-**Concurrency-tier verdict (Pony, Nim, Julia):** all three *advertise* concurrency, and all three
+### Chapel — parallelism as a language primitive
+
+**Chapel** (chpl 2.9.0, native LLVM + the qthreads runtime) is the HPC, parallelism-first entry:
+`forall f in fileList` makes the data-parallel-for a language primitive, and `with (var rbuf = ...)`
+task intents hand each underlying task its own buffers, reused across the files it handles — **the
+buffer-reuse pillar expressed as one keyword**, the cleanest pillar-2 mapping in the set. 48/48 vs grep.
+
+| repo | std | mt | tuned | grep |
+|---|--:|--:|--:|--:|
+| navidrome | 101.8 | 67.2 | 62.2 | 16.1 |
+| cognee | 172.5 | 130.8 | 84.3 | 24.9 |
+| immich | 349.9 | 240.6 | 122.4 | 48.5 |
+
+Both primitives map cleanly and they help — the tuned variant's task-private scratch + a 64 KiB-prefix
+binary check is what pulls immich 240 → 122 ms (a win that grows with tree size: it's dodging huge
+`.git` packs, i.e. the memory pillar). But the headline question — *does `forall` just scale a grep out
+of the box?* — answers **no**: std → tuned scales only 1.6–2.9× on 6 cores, and the dominant tuned gain
+is the memory pillar, not cores. The deeper reason it lands at only 2.5–3.9× grep (6.3–7.2× single-
+threaded) is the scan: Chapel's stdlib `bytes.find` is a naive **O(n·m) byte-by-byte double-loop**
+(`doSearchNoEnc`) — no `memmem`, no SIMD, not even a first-byte `memchr` skip — so it sits in the
+hand-rolled-slow scanner tier with Nim/Ada/OCaml, and parallelism can only divide that loss. On top,
+qthreads-runtime startup is ~**28 ms** (JVM-class), paid even by the serial binary. So: parallelism-as-a-
+primitive is genuinely ergonomic and the task-intent buffer reuse is the slickest pillar-2 expression
+here — but a scalar scanner plus a heavy runtime keep Chapel mid-pack.
+
+**Concurrency-tier verdict (Pony, Nim, Julia, Chapel):** all four *advertise* concurrency, and all four
 genuinely map the parallelism + memory pillars — Pony's safe-actor model scales monotonically, Nim's
-thread pool + `seq` reuse scales, Julia's `@threads` + mutable arrays scale. Yet none lands with the
-C/Zig/Rust front-runners, and for **three different reasons**, each a different pillar/tier: Pony and Nim
-are **scan-bound** (scalar search, no SIMD `memmem`), Julia is **startup-bound** (JIT-compile tax). The
-advertised concurrency was never the problem — it worked. Performance was set, as everywhere in this
-repo, by the *other* pillars: the scan algorithm and the runtime's startup model.
+thread pool + `seq` reuse scales, Julia's `@threads` + mutable arrays scale, Chapel's `forall` +
+task-intent buffers are the most ergonomic of all. Yet **none lands with the C/Zig/Rust front-runners**,
+and for reasons that have *nothing to do with the concurrency*: Pony, Nim, and Chapel are **scan-bound**
+(scalar search, no SIMD `memmem`); Julia (and partly Chapel) are **startup-bound** (JIT-compile / qthreads
+boot). The advertised concurrency was never the bottleneck — it worked every time. Performance was set, as
+everywhere in this repo, by the *other* pillars: the scan algorithm and the runtime's startup model. The
+flashy feature on the box is never the one that decides the race.
 
 ## Optimizations implemented
 
