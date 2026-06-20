@@ -290,6 +290,16 @@ $(BIN)/swiftgrep_std_mt: swift/grep_mt.swift | $(BIN)
 $(BIN)/swiftgrep_std_mt_tuned: swift/grep_mt_tuned.swift | $(BIN)
 	swiftc -O -o $@ $<
 
+# Red (red-lang.org): the Rebol-family homoiconic language -- the gnarliest entry.
+# An interpreted, 32-bit i386, single-threaded toolchain with no concurrency story,
+# so like gawk it ships _std only. The launcher redirects stdin from /dev/null
+# (Red drops to a hanging REPL on a script error otherwise); the script parses
+# /proc/self/cmdline itself because Red's system/options/args mis-splits args.
+red: $(BIN)/redgrep_std
+$(BIN)/redgrep_std: red/grep_std.red | $(BIN)
+	printf '#!/bin/sh\nexec red $(CURDIR)/red/grep_std.red "$$@" </dev/null\n' > $@
+	chmod +x $@
+
 # Common Lisp (SBCL): save-lisp-and-die -> standalone native executables
 # (~4 ms startup; full runtime embedded, so binaries are large).
 lisp: $(BIN)/clgrep_std $(BIN)/clgrep_std_mt $(BIN)/clgrep_std_mt_tuned
@@ -325,4 +335,4 @@ compare: all
 clean:
 	rm -rf $(BIN)
 
-.PHONY: all asm c zig test bench compare clean java kotlin clojure jvm odin lisp haskell ocaml pascal ada fortran d csharp-aot cpp python awk lua js scripting graalvm crystal elixir swift
+.PHONY: all asm c zig test bench compare clean java kotlin clojure jvm odin lisp haskell ocaml pascal ada fortran d csharp-aot cpp python awk lua js scripting graalvm crystal elixir swift red

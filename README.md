@@ -9,7 +9,7 @@ repositories it runs **~3× faster than GNU grep and ~2× faster than ripgrep**
 This repo is also an **experiment**: the same program is reimplemented in **C**,
 **C++**, **Zig**, **Go**, **Rust**, **Odin**, **D**, **Java**, **C#**, **Kotlin**, **Clojure**,
 **Common Lisp**, **Haskell**, **OCaml**, **FreePascal**, **Ada**, **Fortran**,
-**Python**, **JavaScript**, **LuaJIT**, **awk**, **Crystal**, **Elixir**, and **Swift** —
+**Python**, **JavaScript**, **LuaJIT**, **awk**, **Crystal**, **Elixir**, **Swift**, and **Red** —
 both *hand-optimized* (same syscall strategy, SIMD, parallel walker)
 and *idiomatic stdlib*. The question: *did writing it in assembly buy any of the speed,
 or was it the engineering all along?* **Answer below; the short version is: within the
@@ -44,7 +44,7 @@ Geomean slowdown vs the hand-written assembly, `-ri error`, 10 repos, 6 cores
 | **idiomatic** + naive threads (C / Zig / Go / Rust) | ~9.7× |
 | **idiomatic** + threads + reused buffer + prefix binary-check | **C 3.2× / Zig 2.8× / Go 4.4× / Rust 2.4×** |
 
-Twenty more languages were added later (consistent single-pass benchmark, see RESULTS.md) — and
+Twenty-one more languages were added later (consistent single-pass benchmark, see RESULTS.md) — and
 they sort by **runtime model**, not syntax:
 
 | implementation | character |
@@ -69,6 +69,7 @@ they sort by **runtime model**, not syntax:
 | **Crystal** (LLVM, native + GC) | Ruby-like syntax, native ELF: **1.09 ms** startup (native cluster, ≈ D/OCaml). Mutable `Bytes` ⇒ buffer-reuse pillar works, tuned-MT ~**3.0–3.5× grep**. Real MT needs `-Dpreview_mt` + `CRYSTAL_WORKERS` |
 | **Swift** (swiftc -O, native + ARC) | native LLVM but **ARC** — a third memory model (not GC, not manual): ~**2.5 ms** startup (native cluster; just above C/D as the runtime is shared-lib-linked). ARC/CoW lets the reused buffer work, so tuned-MT dominates (immich 591→158) and *beats grep on small trees*; single-threaded trails C/D (ARC retain/release + bounds checks) |
 | **Elixir** (BEAM/ERTS VM) | the exotic VM and the **slowest-starting runtime in the set**: ~**480 ms** ERTS boot dominates every short run (past Clojure's ~450 ms). `:binary.match` (C BIF) carries the scan and `Task.async_stream` maps parallelism cleanly, but immutable binaries forbid buffer reuse (like Haskell) — lands 15–60× grep, startup-bound |
+| **Red** (red-lang.org, Rebol-family) | the gnarliest toolchain: **interpreted, 32-bit i386**, no concurrency (→ `_std` only, like gawk). ~19 ms startup but the **slowest scanner** — ~**660× grep** (the interpreted byte-wise `-i` fold dominates; `find` is native C, but the read/walk/fold glue is all interpreter). Gotchas conquered: `quit/return` exit codes, REPL-hang on stdin, `what-dir`≠cwd, no `lowercase` on binary, a broken `system/options/args` (parse `/proc/self/cmdline` by hand), and **case-insensitive words** (a global `NL` silently collided with a local `nl`) |
 
 ### 1. The language barely matters — the *runtime model* is everything
 
@@ -108,13 +109,13 @@ and expect it to scale.
 - **Boyer-Moore-Horspool**: 4× *slower* than the SIMD scan for short patterns (latency-bound
   scalar loop) → gated to ≥32-char patterns only.
 
-### 4. Two throughlines from the full 24-language set
+### 4. Two throughlines from the full 25-language set
 
 **Startup spans ~1000×, sorted purely by runtime model.** FreePascal 0.41 ms · C ~0.5 ·
 Crystal 1.09 · C# 1.6 · Swift 2.5 · LuaJIT 2.6 · SBCL 3.4 · gawk 3.7 (native / native-image) →
-Python 15 · Java 30 · node 32 / deno 33 (interpreter / VM boot) → **Clojure ~450 · Elixir ~480**
-(full VM init). Nothing about *syntax* predicts where a language lands — only how its runtime
-starts and parallelizes.
+Python 15 · Red 19 · Java 30 · node 32 / deno 33 (interpreter / VM boot) → **Clojure ~450 ·
+Elixir ~480** (full VM init). Nothing about *syntax* predicts where a language lands — only how its
+runtime starts and parallelizes.
 
 **It's never the thing you'd first credit.** Every headline result here, once instrumented, turned
 out to be misattributed — and the real cause was always the memory/parallelism strategy, not the
@@ -164,6 +165,7 @@ awk/              GNU awk (readdir walk + index() scan), 1 variant (no threads)
 crystal/          Crystal (LLVM native + GC; Ruby-ish), 3 variants (_mt needs -Dpreview_mt)
 elixir/           Elixir (BEAM VM; :binary.match + Task.async_stream), 3 variants
 swift/            Swift (swiftc -O native + ARC; memmem scan + GCD/pthread MT), 3 variants
+red/              Red (red-lang.org, Rebol-family interpreter; read/binary + find), 1 variant (no threads)
 bench/            iouring_probe.c and friends
 docs/RESULTS.md   full benchmark numbers + methodology
 tests/            run.sh (correctness vs grep), verify_impl.sh (any binary vs grep),
@@ -213,6 +215,7 @@ make scripting   # python + lua + js + awk
 make crystal     # Crystal native   (needs `crystal`; _mt uses -Dpreview_mt + CRYSTAL_WORKERS)
 make elixir      # Elixir           (needs `elixir`; BEAM VM)
 make swift       # Swift native     (needs `swiftc`; native LLVM + ARC)
+make red         # Red              (needs `red`; Rebol-family interpreter, _std only)
 
 bin/asmgrep -ri ontology /path/to/repo
 

@@ -673,6 +673,38 @@ thread identity that GCD's transient task closures don't provide. So a third mem
 once buffer-reuse + parallelism are applied, Swift is grep-competitive; the language was never the
 variable.
 
+## Red: the gnarliest toolchain (2026-06-20)
+
+Red (red-lang.org) is the Rebol-family homoiconic language — and by far the most awkward entry to
+make byte-identical to grep. It's an **interpreted, 32-bit i386** binary with no concurrency story, so
+like gawk it ships `_std` only. 16/16 vs grep.
+
+| repo | Red | grep | ×grep |
+|---|--:|--:|--:|
+| navidrome | 10.6 s | 16 ms | 662× |
+| cognee | 17.9 s | 25 ms | 716× |
+| immich | 44.8 s | 49 ms | 914× |
+| **startup** | ~19 ms | — | — |
+
+It's the **slowest scanner in the repo** (~750× grep geomean). But — unlike gawk, whose deficit
+*widens* sharply with tree size — Red's slowdown stays roughly flat, because Red's `find` is a native
+(C) runtime function, so the scan itself scales with the data; what's interpreted is everything
+*around* it: `read/binary`, the byte-wise ASCII `-i` fold (Red's `lowercase` silently fails on a
+`binary!`), per-line bound extraction, and the manual recursion. Startup ~19 ms puts it in the
+interpreted tier beside Python.
+
+Getting there meant defeating a stack of Rebol-family gnarls, each worth recording:
+- scripts **exit 255 unless you end with `quit/return N`** — that's the only way to set exit codes 0/1/2;
+- **stdin must be redirected from `/dev/null`** or a script error drops into a REPL that hangs;
+- **`what-dir` is the script's directory**, not the invocation cwd (restored via `change-dir get-env "PWD"`);
+- **`lowercase` returns `none` on a `binary!`**, forcing a byte-wise ASCII fold (the main reason it's so slow under `-i`);
+- **`system/options/args` mis-splits empty arguments** (it collapses the NUL-separated `/proc/self/cmdline`), so `grep "" file` is impossible through it — the script parses `/proc/self/cmdline` itself;
+- and the killer: **Red words are case-insensitive**, so a global `NL` (newline byte) silently collided with a local `nl:` set-word and got auto-localized to an unset `none` inside a function, breaking every line-bound computation until instrumentation found it.
+
+Red lands at the very bottom alongside gawk: an interpreted language whose native scan primitive can't
+rescue it once the surrounding work is interpreted and there's no concurrency pillar to parallelize
+across. Same lesson, extreme end: runtime model sets the floor.
+
 ## Optimizations implemented
 
 | technique | effect |
