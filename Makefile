@@ -317,6 +317,19 @@ $(BIN)/ponygrep_std_mt: pony/mt/main.pony | $(BIN)
 $(BIN)/ponygrep_std_mt_tuned: pony/tuned/main.pony | $(BIN)
 	$(PONYC) -b ponygrep_std_mt_tuned -o $(BIN) pony/tuned
 
+# Nim (compiles through C to a native ELF): advertises performance + concurrency.
+# Idiomatic raw Thread/createThread over a shared Atomic[int] work index (mirrors
+# the C/D/Zig pools); mutable seq[byte] => buffer reuse works. Native cluster
+# (~0.7 ms startup), but the hand-rolled scalar scan (no stdlib memmem) is the
+# bottleneck, so it's scan-bound like Ada/OCaml/Pascal. --threads:on (default in 2.x).
+nim: $(BIN)/nimgrep_std $(BIN)/nimgrep_std_mt $(BIN)/nimgrep_std_mt_tuned
+$(BIN)/nimgrep_std: nim/grep_std.nim | $(BIN)
+	nim c -d:release --threads:on -o:$@ nim/grep_std.nim
+$(BIN)/nimgrep_std_mt: nim/grep_mt.nim | $(BIN)
+	nim c -d:release --threads:on -o:$@ nim/grep_mt.nim
+$(BIN)/nimgrep_std_mt_tuned: nim/grep_mt_tuned.nim | $(BIN)
+	nim c -d:release --threads:on -o:$@ nim/grep_mt_tuned.nim
+
 # Common Lisp (SBCL): save-lisp-and-die -> standalone native executables
 # (~4 ms startup; full runtime embedded, so binaries are large).
 lisp: $(BIN)/clgrep_std $(BIN)/clgrep_std_mt $(BIN)/clgrep_std_mt_tuned
@@ -352,4 +365,4 @@ compare: all
 clean:
 	rm -rf $(BIN)
 
-.PHONY: all asm c zig test bench compare clean java kotlin clojure jvm odin lisp haskell ocaml pascal ada fortran d csharp-aot cpp python awk lua js scripting graalvm crystal elixir swift red pony
+.PHONY: all asm c zig test bench compare clean java kotlin clojure jvm odin lisp haskell ocaml pascal ada fortran d csharp-aot cpp python awk lua js scripting graalvm crystal elixir swift red pony nim

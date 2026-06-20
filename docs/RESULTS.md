@@ -705,12 +705,15 @@ Red lands at the very bottom alongside gawk: an interpreted language whose nativ
 rescue it once the surrounding work is interpreted and there's no concurrency pillar to parallelize
 across. Same lesson, extreme end: runtime model sets the floor.
 
-## Concurrency-forward languages: does *advertised* concurrency scale? — Pony (2026-06-20)
+## Concurrency-forward languages: does *advertised* concurrency scale? (2026-06-20)
 
 A sub-experiment: take languages whose *marketing* is concurrency and test whether their fancy models
 actually map to the pillars, or hit the same "can't bolt parallelism onto allocation-heavy code" wall.
-First up, the marquee: **Pony** — an actor-model, native-LLVM language whose reference-capability system
-makes a data race a **compile error**, not a runtime hazard. 48/48 vs grep.
+
+### Pony — the concurrency-safety marquee
+
+**Pony** — an actor-model, native-LLVM language whose reference-capability system makes a data race a
+**compile error**, not a runtime hazard. 48/48 vs grep.
 
 | repo | std | mt | tuned | grep |
 |---|--:|--:|--:|--:|
@@ -735,6 +738,32 @@ re-freezing the path list to `val` before sending, a manual `push` loop where `c
 cross the cap boundary) — each error message pointed straight at the fix. ~5 ms startup keeps it in the
 native cluster. So Pony's headline claim holds up: the advertised concurrency *does* scale and *does*
 respect the memory pillar; what keeps it off the podium is the scalar scanner, not the actor model.
+
+### Nim — native, scales the pillars, but scan-bound
+
+**Nim** (2.2.10) compiles through C to a native ELF and starts in **0.71 ms** — between FreePascal
+(0.41) and Crystal (1.09). 48/48 vs grep.
+
+| repo | std | mt | tuned | grep |
+|---|--:|--:|--:|--:|
+| navidrome | 71.6 | 20.7 | 16.7 | 15.3 |
+| cognee | 175.6 | 93.6 | 97.5 | 23.6 |
+| immich | 411.6 | 234.0 | 222.7 | 47.4 |
+
+The idiomatic concurrency primitive — raw `Thread`/`createThread` over a shared `Atomic[int]` work
+index (chosen over `std/threadpool`'s `spawn`, to mirror the C/D/Zig pools and give each worker a
+long-lived thread to hang reused buffers off) — **scales**: single-threaded → tuned-MT is ~4.3× on
+navidrome, ~1.8× on the big trees, and mutable `seq[byte]`/`string` buffers let the memory pillar work
+(per-worker reused read/lowercase/output buffers + 64 KB-prefix binary-check are a clean fit). But —
+**unlike C, where SIMD `memmem` makes the scan free and page faults dominate** — Nim has no stdlib
+`memmem`, so the scan runs a hand-rolled scalar first-byte/compare loop, and *that* is the bottleneck
+(user-CPU ~278 ms on immich vs grep's 29 ms). That caps it at ~4–5× grep and, tellingly, makes
+naive-MT and tuned-MT nearly tie — on cognee the tuned variant is even marginally *slower*. **When the
+scan dominates, fixing allocation buys little**: Nim sorts as a fast-starting native language whose
+runtime model scales the pillars correctly, held back from the C/Zig tier purely by the *algorithm*
+pillar — the same hand-rolled-search tax as Ada/OCaml/FreePascal, not its compiler or concurrency model.
+(It's the cleanest demonstration that the memory pillar only pays off once you're fault-bound, not
+scan-bound.)
 
 ## Optimizations implemented
 
