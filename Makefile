@@ -300,6 +300,23 @@ $(BIN)/redgrep_std: red/grep_std.red | $(BIN)
 	printf '#!/bin/sh\nexec red $(CURDIR)/red/grep_std.red "$$@" </dev/null\n' > $@
 	chmod +x $@
 
+# Pony (ponylang.io): native LLVM, the marquee CONCURRENCY-SAFETY entry -- an
+# actor-model, data-race-free-BY-COMPILE-TIME-DESIGN language (reference
+# capabilities), per-actor heaps, lock-free work-stealing scheduler. ponyc
+# compiles a DIRECTORY of .pony files into one binary. _std scans serially in
+# Main; _mt fans the file list across one Worker actor per scheduler -> one Writer
+# (contents shared as immutable `val`); the _mt_tuned worker OWNS+REUSES one
+# `Array[U8] ref` buffer in its per-actor heap (libc FFI read + 64KB-prefix check),
+# copying matched lines out as fresh `val`. Defaults to all cores (--ponymaxthreads=N).
+PONYC ?= $(HOME)/.local/share/ponyup/bin/ponyc
+pony: $(BIN)/ponygrep_std $(BIN)/ponygrep_std_mt $(BIN)/ponygrep_std_mt_tuned
+$(BIN)/ponygrep_std: pony/std/main.pony | $(BIN)
+	$(PONYC) -b ponygrep_std -o $(BIN) pony/std
+$(BIN)/ponygrep_std_mt: pony/mt/main.pony | $(BIN)
+	$(PONYC) -b ponygrep_std_mt -o $(BIN) pony/mt
+$(BIN)/ponygrep_std_mt_tuned: pony/tuned/main.pony | $(BIN)
+	$(PONYC) -b ponygrep_std_mt_tuned -o $(BIN) pony/tuned
+
 # Common Lisp (SBCL): save-lisp-and-die -> standalone native executables
 # (~4 ms startup; full runtime embedded, so binaries are large).
 lisp: $(BIN)/clgrep_std $(BIN)/clgrep_std_mt $(BIN)/clgrep_std_mt_tuned
@@ -335,4 +352,4 @@ compare: all
 clean:
 	rm -rf $(BIN)
 
-.PHONY: all asm c zig test bench compare clean java kotlin clojure jvm odin lisp haskell ocaml pascal ada fortran d csharp-aot cpp python awk lua js scripting graalvm crystal elixir swift red
+.PHONY: all asm c zig test bench compare clean java kotlin clojure jvm odin lisp haskell ocaml pascal ada fortran d csharp-aot cpp python awk lua js scripting graalvm crystal elixir swift red pony

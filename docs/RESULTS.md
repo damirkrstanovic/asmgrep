@@ -705,6 +705,37 @@ Red lands at the very bottom alongside gawk: an interpreted language whose nativ
 rescue it once the surrounding work is interpreted and there's no concurrency pillar to parallelize
 across. Same lesson, extreme end: runtime model sets the floor.
 
+## Concurrency-forward languages: does *advertised* concurrency scale? — Pony (2026-06-20)
+
+A sub-experiment: take languages whose *marketing* is concurrency and test whether their fancy models
+actually map to the pillars, or hit the same "can't bolt parallelism onto allocation-heavy code" wall.
+First up, the marquee: **Pony** — an actor-model, native-LLVM language whose reference-capability system
+makes a data race a **compile error**, not a runtime hazard. 48/48 vs grep.
+
+| repo | std | mt | tuned | grep |
+|---|--:|--:|--:|--:|
+| navidrome | 102.4 | 78.7 | 67.8 | 15.7 |
+| cognee | 161.0 | 102.2 | 75.9 | 24.4 |
+| immich | 355.1 | 215.9 | 111.6 | 47.9 |
+| **startup** | 5.4 ms (1.9 pinned to 1 thread) | — | — | — |
+
+**The answer is yes — compiler-guaranteed-safe concurrency genuinely scales the workload.** `Main`
+walks the tree and fans the file list out to one `Worker` actor per scheduler; each scans concurrently
+and feeds a single `Writer`, with file contents shared as immutable `val` arrays so nothing is ever
+aliased mutably across actors. The ordering is monotone std → mt → tuned on every repo (immich
+355 → 216 → 112 ms, 3.2× from the serial baseline). **And the memory pillar maps too** — Pony's
+*per-actor heaps* let each worker own a `ref` read buffer that survives across files; since stdlib
+`File.read` always allocates a fresh `iso`, the worker drops to libc FFI (`@open`/`@read`) to read
+straight into that reused buffer, copying only the small matched lines out as fresh `val` (so the
+`ref` buffer never crosses the actor boundary — race-freedom preserved). It lands **mid-pack, ~2–4×
+grep** — not with the C/Zig/Rust front cluster — because the scan is a scalar byte loop (no SIMD/memmem)
+and the runtime spins up all scheduler threads (~3.5 ms) even for tiny inputs. The capabilities checker
+cost real-but-bounded friction (three fights: consuming an `iso` directory handle into a `ref`,
+re-freezing the path list to `val` before sending, a manual `push` loop where `copy_from` wouldn't
+cross the cap boundary) — each error message pointed straight at the fix. ~5 ms startup keeps it in the
+native cluster. So Pony's headline claim holds up: the advertised concurrency *does* scale and *does*
+respect the memory pillar; what keeps it off the podium is the scalar scanner, not the actor model.
+
 ## Optimizations implemented
 
 | technique | effect |
