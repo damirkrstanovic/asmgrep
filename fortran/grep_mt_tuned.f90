@@ -204,11 +204,15 @@ contains
   subroutine ensure_cap(buf, n)
     character(len=:), allocatable, intent(inout) :: buf
     integer, intent(in) :: n
+    integer(c_int64_t) :: newlen
     if (allocated(buf)) then
       if (len(buf) >= n) return
       deallocate(buf)
     end if
-    allocate(character(len=n + n/2 + 4096) :: buf)
+    ! 64-bit arithmetic: n + n/2 + 4096 overflows a 32-bit int for n > ~1.4 GB
+    ! (wraps negative -> bogus huge allocation -> crash).
+    newlen = int(n, c_int64_t) + int(n, c_int64_t)/2 + 4096
+    allocate(character(len=newlen) :: buf)
   end subroutine ensure_cap
 
   ! TUNED search: reuses caller-supplied data/low/obuf buffers (per-thread).
@@ -235,8 +239,10 @@ contains
     ! a positioned stream read, NUL-check it, and read the remainder only if it
     ! passes. No c_loc-of-substring (which can materialise an aliasing temporary
     ! and corrupt the heap under threads) — plain Fortran stream I/O is safe.
-    call ensure_cap(w%data, n)
+    ! Allocate ONLY the prefix first and NUL-check it, so a huge binary (e.g. a
+    ! 1.5 GB .git pack) is skipped at 64 KB without ever allocating its full size.
     peek = min(n, PREFIX)
+    call ensure_cap(w%data, peek)
     read(u, pos=1, iostat=ios) w%data(1:peek)
     if (ios /= 0) then
       close(u)
@@ -251,9 +257,11 @@ contains
       end if
     end do
 
-    ! read remainder only now
+    ! text: grow to full size and read the whole file (ensure_cap preserves
+    ! nothing, so re-read from pos=1). Binary files never reach here.
     if (n > peek) then
-      read(u, pos=peek+1, iostat=ios) w%data(peek+1:n)
+      call ensure_cap(w%data, n)
+      read(u, pos=1, iostat=ios) w%data(1:n)
       if (ios /= 0) n = peek
     end if
     close(u)

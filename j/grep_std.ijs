@@ -75,8 +75,18 @@ search_file =: 3 : 0
   matched
 )
 
-NB. -------- recursive walk. 1!:0 follows symlinks; we classify by attr col 4
-NB. ('d' at index 4 => directory). Recurse dirs, search everything else. -------
+NB. -------- symlink test via libc readlink (>= 0 only on a symlink). 1!:0
+NB. classifies a symlinked dir as 'd' and follows it, but grep -r does NOT
+NB. follow symlinks found while recursing -- following one double-counts every
+NB. file reachable through a symlinked dir (e.g. immich/fastlane/metadata). ----
+islink =: 3 : 0
+  buf =. 256 $ ' '
+  res =. 'libc.so.6 readlink > x *c *c x' 15!:0 (y;buf;256)
+  (>0{res) >: 0
+)
+
+NB. -------- recursive walk. Skip symlinks (grep -r doesn't follow them); else
+NB. classify by attr col 4 ('d' at index 4 => directory), recurse dirs. -------
 walk =: 3 : 0
   base =. y
   matched =. 0
@@ -90,9 +100,11 @@ walk =: 3 : 0
     nm =. > i { names
     at =. > i { attrs
     full =. base , '/' , nm
-    if. 'd' = 4 { at do.
+    if. islink full do.
+      NB. grep -r does not follow symlinks found while recursing
+    elseif. 'd' = 4 { at do.
       if. walk full do. matched =. 1 end.
-    else.
+    elseif. 1 do.
       if. search_file full do. matched =. 1 end.
     end.
     i =. i + 1

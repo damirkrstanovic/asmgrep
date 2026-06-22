@@ -71,8 +71,12 @@
 (defun read-whole-file (path)
   "Read entire file as octet vector, or NIL on error."
   (handler-case
-      (with-open-file (s path :element-type '(unsigned-byte 8)
-                             :if-does-not-exist nil)
+      ;; parse-native-namestring: treat path literally. (pathname/open would read
+      ;; [..] as a wildcard pattern -> wild pathname -> open errors -> file silently
+      ;; skipped (e.g. Next.js [id] / SvelteKit [[..]] dynamic-route dirs).
+      (with-open-file (s (sb-ext:parse-native-namestring path)
+                         :element-type '(unsigned-byte 8)
+                         :if-does-not-exist nil)
         (unless s (return-from read-whole-file nil))
         (let* ((len (file-length s))
                (data (make-array len :element-type '(unsigned-byte 8))))

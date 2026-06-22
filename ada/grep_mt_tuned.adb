@@ -12,6 +12,7 @@ with Ada.Streams.Stream_IO;   use Ada.Streams.Stream_IO;
 with Ada.Text_IO;
 with GNAT.OS_Lib;
 with System.Multiprocessors;
+with Interfaces.C;
 
 procedure Grep_Mt_Tuned is
 
@@ -165,19 +166,30 @@ procedure Grep_Mt_Tuned is
      (File : in out File_Type; Buf : Str_Acc; Start : Natural;
       Count : Natural; Got : out Natural)
    is
-      SEA  : Stream_Element_Array (1 .. Stream_Element_Offset (Count));
-      Last : Stream_Element_Offset := 0;
+      --  Bounded 64 KB stack buffer, read in a loop. Sizing SEA to the whole
+      --  Count overflowed a worker task's (small) stack on large files -> SEGV.
+      CHUNK : constant := 65536;
+      SEA   : Stream_Element_Array (1 .. CHUNK);
+      Last  : Stream_Element_Offset;
+      Done  : Natural := 0;
+      Want  : Natural;
    begin
+      Got := 0;
       if Count = 0 then
-         Got := 0;
          return;
       end if;
-      Read (File, SEA, Last);
-      Got := Natural (Last);
-      for I in 1 .. Got loop
-         Buf (Start + I) :=
-           Character'Val (Natural (SEA (Stream_Element_Offset (I))));
+      while Done < Count loop
+         Want := Natural'Min (CHUNK, Count - Done);
+         Read (File, SEA (1 .. Stream_Element_Offset (Want)), Last);
+         exit when Last < 1;
+         for I in 1 .. Natural (Last) loop
+            Buf (Start + Done + I) :=
+              Character'Val (Natural (SEA (Stream_Element_Offset (I))));
+         end loop;
+         Done := Done + Natural (Last);
+         exit when Natural (Last) < Want;  -- short read => EOF
       end loop;
+      Got := Done;
    end Read_Into;
 
    procedure Search_File (W : in out Worker_State; Path : String) is
@@ -236,14 +248,16 @@ procedure Grep_Mt_Tuned is
             return;
       end;
       Len := Natural (Size (File));
-      Ensure (W.Data, Natural'Max (Len, 1));
 
-      --  Read only the 64 KB prefix first (the target prefix size).
+      --  Allocate ONLY the prefix first and NUL-check it, so a huge binary
+      --  (e.g. a 1.5 GB .git pack) is skipped at 64 KB without ever allocating
+      --  its full size (which overflowed Ensure's 32-bit length arithmetic).
       Peek := (if Len < PREFIX then Len else PREFIX);
+      Ensure (W.Data, Natural'Max (Peek, 1));
       Read_Into (File, W.Data, 0, Peek, Got);
       Peek := Got;  -- bytes actually present in the prefix
 
-      --  NUL-check the prefix; only read the remainder if it passes.
+      --  NUL-check the prefix; only read the whole file if it passes.
       for I in 1 .. Peek loop
          if W.Data (I) = Character'Val (0) then
             Close (File);
@@ -251,11 +265,13 @@ procedure Grep_Mt_Tuned is
          end if;
       end loop;
 
-      --  Read the remainder only if the file is larger than the prefix AND
-      --  the prefix read was not short (a short prefix => EOF, no remainder).
+      --  Text: grow to full size and re-read from the start (Ensure does not
+      --  preserve contents). Binary files never reach here.
       if Len > Peek and then Peek = PREFIX then
-         Read_Into (File, W.Data, Peek, Len - Peek, Got);
-         Len := Peek + Got;  -- actual total bytes read
+         Ensure (W.Data, Len);
+         Set_Index (File, 1);
+         Read_Into (File, W.Data, 0, Len, Got);
+         Len := Got;
       else
          Len := Peek;  -- prefix was the whole (or short) file
       end if;
@@ -308,6 +324,22 @@ procedure Grep_Mt_Tuned is
       end loop;
    end Worker;
 
+   --  True if Path is a symbolic link. Ada.Directories.Kind resolves links
+   --  (a symlinked dir reports Directory), so without this the walker follows
+   --  symlinks found during recursion -- but grep -r does not, which double-
+   --  counts anything reachable through a symlinked dir. readlink succeeds
+   --  (>= 0) only on a symlink; on a regular file/dir it fails (EINVAL).
+   function Is_Symlink (Path : String) return Boolean is
+      use Interfaces.C;
+      function Sys_Readlink
+        (P : char_array; Buf : char_array; Sz : size_t) return long
+        with Import, Convention => C, External_Name => "readlink";
+      Cpath : constant char_array := To_C (Path);
+      Dummy : char_array (0 .. 1);
+   begin
+      return Sys_Readlink (Cpath, Dummy, 1) >= 0;
+   end Is_Symlink;
+
    procedure Walk (Dir : String) is
       Srch : Search_Type;
       Ent  : Directory_Entry_Type;
@@ -325,6 +357,8 @@ procedure Grep_Mt_Tuned is
          begin
             if Nm = "." or else Nm = ".." then
                null;
+            elsif Is_Symlink (Fp) then
+               null;  -- grep -r does not follow symlinks found while recursing
             elsif K = Directory then
                Walk (Fp);
             elsif K = Ordinary_File then

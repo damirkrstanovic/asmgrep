@@ -143,8 +143,12 @@
   (let ((out-buf (tbuf-out tb)))
     (setf (fill-pointer out-buf) 0)
     (handler-case
-        (with-open-file (s path :element-type '(unsigned-byte 8)
-                               :if-does-not-exist nil)
+        ;; parse-native-namestring: treat path literally. (pathname/open would read
+        ;; [..] as a wildcard pattern -> wild pathname -> open errors -> file silently
+        ;; skipped (e.g. Next.js [id] / SvelteKit [[..]] dynamic-route dirs).
+        (with-open-file (s (sb-ext:parse-native-namestring path)
+                           :element-type '(unsigned-byte 8)
+                           :if-does-not-exist nil)
           (unless s (return-from search-file 0))
           (let* ((len (file-length s))
                  (peek (min len +peek+))
