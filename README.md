@@ -29,6 +29,11 @@ grep [-r] [-i] PATTERN PATH...
 Literal substring only — **no regex** (compare against `grep -F` / `rg -F`).
 Exit status: `0` = match, `1` = no match, `2` = error.
 
+> ### 🏁 [**The complete leaderboard → docs/LEADERBOARD.md**](docs/LEADERBOARD.md)
+> All **48 implementations** ranked on one harness against a pinned public corpus (6 repos). Nine beat
+> GNU grep; the spread top-to-bottom is ~4,300×, sorted almost entirely by *runtime model, not language*.
+> The tables below are excerpts.
+
 ## Findings
 
 All implementations are **byte-for-byte identical to grep** on every repo tested.
@@ -44,7 +49,11 @@ Geomean slowdown vs the hand-written assembly, `-ri error`, 10 repos, 6 cores
 | **idiomatic** + naive threads (C / Zig / Go / Rust) | ~9.7× |
 | **idiomatic** + threads + reused buffer + prefix binary-check | **C 3.2× / Zig 2.8× / Go 4.4× / Rust 2.4×** |
 
-### 🏁 Leaderboard — all 29 languages, best shipped variant
+### 🏁 Leaderboard — 29 languages, best shipped variant (plus 12 more below)
+
+> **For the complete, current board (all 48 implementations on one pinned-corpus harness) see
+> [docs/LEADERBOARD.md](docs/LEADERBOARD.md).** The two tables below are the earlier single-repo /
+> synthetic-tree snapshots, kept for the per-corpus narrative.
 
 One harness, one repo: `-ri error` on **navidrome (29 MB, warm cache)**, each implementation's fastest
 binary, vs GNU grep (`-rIiF`, same run). `×grep` < 1 means *faster than grep*.
@@ -75,15 +84,16 @@ binary, vs GNU grep (`-rIiF`, same run). `×grep` < 1 means *faster than grep*.
 | 20 | **C#** | 3.04× | 1.6 ms | NativeAOT |
 | 21 | **Chapel** | 3.78× | 28 ms | native HPC (scan-bound + qthreads boot) |
 | 22 | **Haskell** | 4.82× | 17 ms | native + RTS |
-| 23 | **JavaScript** | 6.6× | 32 ms | V8 (`worker_threads`) |
-| 24 | **Python** | 10.6× | 15 ms | CPython (multiprocessing) |
-| 25 | **Kotlin** | 16.3× | ~35 ms | JVM — startup-bound |
-| 26 | **Java** | 17.8× | 30 ms | JVM — startup-bound |
-| 27 | **Clojure** | 38.7× | ~450 ms | JVM AOT — startup-bound |
-| 28 | **Elixir** | 43.1× | ~480 ms | BEAM — startup-bound |
-| 29 | **Julia** | 47.7× | ~470 ms | JIT — startup-bound (JIT-compile tax) |
-| 30 | **awk** | 80.7× | 3.7 ms | interpreted (gawk) |
-| 31 | **Red** | 671× | 19 ms | interpreted (Rebol-family) |
+| 23 | **Clojure-native** | ~6.5× | 2.9 ms | native-image (AOT'd Clojure — the loop-closer) |
+| 24 | **JavaScript** | 6.6× | 32 ms | V8 (`worker_threads`) |
+| 25 | **Python** | 10.6× | 15 ms | CPython (multiprocessing) |
+| 26 | **Kotlin** | 16.3× | ~35 ms | JVM — startup-bound |
+| 27 | **Java** | 17.8× | 30 ms | JVM — startup-bound |
+| 28 | **Clojure** | 38.7× | ~450 ms | JVM AOT — startup-bound |
+| 29 | **Elixir** | 43.1× | ~480 ms | BEAM — startup-bound |
+| 30 | **Julia** | 47.7× | ~470 ms | JIT — startup-bound (JIT-compile tax) |
+| 31 | **awk** | 80.7× | 3.7 ms | interpreted (gawk) |
+| 32 | **Red** | 671× | 19 ms | interpreted (Rebol-family) |
 
 **Read it as short-job-weighted.** On a 29 MB tree the scan is small, so *startup* is a big share of
 the total — which is exactly why the VM/JIT runtimes (Java, Clojure, Elixir, Julia) sit at the bottom.
@@ -95,8 +105,35 @@ Java, 1.49×), and `make clojure-native` drops **Clojure 38.7× → ~6.5×** (st
 implementations beat GNU grep; the spread top-to-bottom is ~2900×, sorted almost entirely by runtime
 model.**
 
-Twenty-five more languages were added later (consistent single-pass benchmark, see RESULTS.md) — and
-they sort by **runtime model**, not syntax:
+**Twelve more, one batch later** — the scripting/shell floor, two more loop-closers, an exotic VM, more
+AOT natives, two array/APL languages, and a stack language. Measured on a **separate synthetic 36 MB tree**
+(3,600 files; *not* the repo corpus above — anchors on this tree: GNU grep = 1.00×, Python 4.5×, awk 105× —
+so read the **ordering**, not the absolute multiplier across tables; full methodology in RESULTS.md):
+
+| impl | ×grep (36 MB tree) | startup | runtime model |
+|---|--:|--:|---|
+| **Codon** | 7.0× | 8.5 ms | Python *syntax* → native (LLVM AOT) — the Python loop-closer |
+| **Ruby** (CRuby) | 7.5× | 45 ms | interpreted glue, C-backed `String#index` scan |
+| **J** (jsoftware) | 8.6× | 54 ms | array lang; `E.` is a C primitive ⇒ **native cluster** |
+| **Rust→WASI** | 9.8× | 14 ms | native Rust on `wasm32-wasip1` under wasmtime (sandbox tax) |
+| **Scala-Native** | 10.0× | 2.0 ms | the same Scala, AOT'd via LLVM — no JVM, no startup tax |
+| **Dart** | 12.7× | 2.6 ms | native self-contained exe |
+| **Dyalog APL** | 22× | 313 ms | canonical APL; C-backed `⍷` scan (fast like J) but **startup-bound** on a 313 ms VM boot |
+| **PyPy** | 71× | 52 ms | the **unchanged** `grep_std.py` under a tracing JIT (startup-bound here) |
+| **Bash** | 230× | 3.4 ms | pure-shell floor; no concurrency primitive (`_std` only) |
+| **Raku** (MoarVM) | 471× | 484 ms | bytecode VM whose boot dominates — startup-bound |
+| **Forth** (gforth) | >6000× | 6.0 ms | interpreted byte-at-a-time scan — the **bottom of the board** |
+
+Same lesson, three ways. **J** (array language) lands among the natives because its scan primitive is C,
+while **Forth** is the floor because its scan is interpreted byte compares — *same "interpreted language"
+label, opposite result*, decided only by whether the hot loop bottoms out in C. And **Dyalog APL** sharpens
+it inside the array family: its `⍷` scan is C-backed and fast *like J's*, yet a 313 ms interpreter boot
+drops it into the startup-bound tier — two array languages, same fast scan, sorted apart by startup model
+alone. (GNU APL was also attempted but couldn't pass the harness on this machine's broken `gnu-apl 1.9-1`
+build, so **J** and **Dyalog** are the array-language representatives. See RESULTS.md for the post-mortem.)
+
+The twenty-five before them (consistent single-pass benchmark, see RESULTS.md) likewise sort by
+**runtime model**, not syntax:
 
 | implementation | character |
 |---|---|
@@ -125,6 +162,18 @@ they sort by **runtime model**, not syntax:
 | **Nim** (2.2.10, compiles to C → native) | native cluster, **0.71 ms** startup (≈ FreePascal/Crystal). Raw `Thread`+atomic-index concurrency scales and mutable `seq[byte]` buffer reuse maps the pillar — but it's **scan-bound, not fault-bound**: no stdlib `memmem`, so the hand-rolled scalar scan caps it at ~4–5× grep and makes tuned barely beat naive. The algorithm-pillar tax (like Ada/OCaml/Pascal), not the runtime |
 | **Julia** (1.12, JIT) | the two-axis case: mutable `Vector{UInt8}` ⇒ buffer reuse *works* and `Threads.@threads` engages all cores (immich tuned-MT beats std) — but ~**470 ms** startup is ~**326 ms first-call JIT-compile** + ~144 ms boot, and that fixed tax swamps the scan, sorting it into the JVM/BEAM **startup-bound** tier (~18–51× grep). A PackageCompiler sysimage would fix it, exactly as GraalVM did for the JVM. Gotcha: `threadid()` exceeds `nthreads()` under `-t auto` (size per-thread state by `maxthreadid()`) |
 | **Chapel** (chpl 2.9, native LLVM + qthreads) | the HPC parallelism-first language: `forall` makes the data-parallel-for a primitive and `with (var ...)` task intents map the buffer-reuse pillar **as one keyword** (the cleanest pillar-2 mapping in the set). Both work — yet it lands only **2.5–3.9× grep**: scalar `bytes.find` (O(n·m), no `memmem`) makes it scan-bound (like Nim/Ada), `forall` scales only 1.6–2.9× (the tuned win is the memory pillar, not cores), and ~**28 ms** qthreads-runtime startup is JVM-class. Parallelism-as-a-primitive is real but can't rescue a scalar scan |
+| **Perl** (5.x, interpreted) | the original text language: recursive `readdir` walk + C-backed `index()` scan + `tr///` fold. Interpreter glue, C hot path — lands with the C-backed scripting scanners (Ruby/Python class). `_std` only (cheap `fork()` ⇒ an `_mt` pool is the natural follow-up) |
+| **Ruby** (CRuby, interpreted) | completes the Ruby→Crystal arc (same syntax family, opposite runtime): ASCII-8BIT `binread` + C-backed `String#index` + `tr` fold. ~45 ms startup; the scan is C so it sits mid-pack among the C-backed interpreters, far ahead of the pure-interpreter floor |
+| **Bash** (pure shell) | the **shell floor**: line-at-a-time `read` + `[[ == *"$needle"* ]]` literal glob + `${,,}` fold + `read -d ''` NUL detect, no external tools in the hot path. Like gawk it has **no concurrency primitive** (`_std` only — the absence is the finding); ~230× grep, near the bottom — but still ~30× *above* Forth, because the glob match drops into C while Forth's scan does not |
+| **PyPy** (tracing JIT) | the cleanest **same-source/different-runtime** point in the whole board: the **byte-identical** `python/grep_std.py`, run under PyPy instead of CPython. No code change. Startup-bound on a short job (~52 ms warm-up tax) ⇒ ~71× here; the JIT helps the scan but the job is too short to amortize boot — exactly the runtime-not-language thesis, with the language held literally constant |
+| **Codon** (Python syntax → LLVM AOT) | the **Python loop-closer**: same `grep_std.py` shape, AOT-compiled to a native ELF. ~8.5 ms startup, ~7× grep — ~10× faster than PyPy on the identical job, landing in the native cluster. (Codon's `str` *is* bytes and its `os` is thin, so stat/dirent go through libc FFI with hand-computed glibc struct offsets — the syntax is Python, the semantics are systems) |
+| **Raku** (Rakudo / MoarVM) | Perl's successor on a bytecode VM. `slurp(:bin)` → `Buf`, latin-1 round-trip for 1-char-per-byte, `.trans` fold. The scan is fine; the **~480 ms MoarVM boot dominates** every short run, sorting Raku into the startup-bound VM tier alongside Elixir/Clojure/Julia. Startup, not syntax |
+| **Dart** (native exe) | `dart compile exe` → self-contained native binary, `dart:io` + `Uint8List` byte scan. ~2.6 ms startup (native cluster); idiomatic single-threaded scalar scan puts it with the native-but-scan-bound group (Nim/Ada/Pascal class) |
+| **Scala-Native** (LLVM AOT, off-JVM) | the same Scala you'd run on the JVM, AOT-compiled via LLVM — **2.0 ms** startup, no JVM, no JIT-warmup. Pairs against a hypothetical JVM-Scala the way **GraalVM-native pairs against JVM-Java**: the loop-closer removes the startup tax outright. ~10× grep, scan-bound single-threaded |
+| **Rust→WASI** (`wasm32-wasip1` + wasmtime) | native Rust compiled to wasm, run sandboxed under wasmtime. WASI is **capability-sandboxed**, so the launcher must preopen host root (`--dir /::/`) for the guest's `std::fs`. ~14 ms startup, ~9.8× grep — the delta over native Rust is the wasm sandbox + syscall-shim tax, an honest measure of "portable sandboxed native" |
+| **J** (jsoftware, array language) | the surprise: an *interpreted* array language that lands in the **native cluster** (~8.6× grep, 0.17 s on the 36 MB tree). `needle E. haystack` (find) and the whole-file read are **compiled C primitives**, so the only hot work isn't interpreted at all. ~54 ms startup. `_std` only; symlinks not skipped in the walk (no portable `lstat` foreign) — invisible to the symlink-free harness |
+| **Dyalog APL** (dyalogscript) | the canonical APL — and, unlike the machine's broken `gnu-apl` build, a **rock-solid** one (16/16, deterministic). Same scan story as J: native `⍷` (Find) is a C primitive, so the scan is fast — but a **~313 ms interpreter boot** makes it startup-bound (Raku/Julia class), the clean within-family proof that startup, not the scan, decides placement. Mature byte-exact I/O: `⎕NREAD`/`⎕NAPPEND` type 80 + `⎕UCS` (unsigned 0–255, NUL-safe), `⎕NINFO⍠('Wildcard' 1)('Follow' 0)` for a symlink-skipping walk, `⎕OFF n` for exit codes. dyalogscript's stdout is a non-seekable pipe, so the launcher injects a temp file the script `⎕NAPPEND`s into, then cats it. `_std` only |
+| **Forth** (gforth 0.7.3, stack language) | the **bottom of the board** and the perfect foil to J: a hand-written **byte-at-a-time `c@` scan** (no library search, no SIMD) takes **>120 s** to scan the 36 MB tree (>6000× grep) — yet startup is **6 ms**. Same "interpreted language" label as J, opposite result: J's scan is C, Forth's is the interpreter doing manual byte compares. Notable gforth lore: `N (bye)` for exit codes (plain `bye` only exits 0), `next-arg` (not the garbage `argc`) for args, and `?do` *not* short-circuiting inverted ranges (a 64 KB runaway trap). `_std` only (no concurrency primitive) |
 
 ### 1. The language barely matters — the *runtime model* is everything
 

@@ -42,11 +42,34 @@ defmodule ExGrep do
 
   # Prefix binary-check read: pull first 64 KB, NUL-check it, read the rest only
   # if clean. Returns {:ok, binary} or :skip (binary file / read error).
+  # :raw :file.read/2 may return FEWER bytes than requested mid-file (a single
+  # read() syscall), so fill the prefix in a loop — otherwise a short read looks
+  # like EOF and the file's tail is silently dropped.
+  defp read_prefix(_fd, acc) when byte_size(acc) >= @prefix, do: {:ok, acc}
+
+  defp read_prefix(fd, acc) do
+    case :file.read(fd, @prefix - byte_size(acc)) do
+      {:ok, chunk} -> read_prefix(fd, acc <> chunk)
+      :eof -> {:ok, acc}
+      other -> other
+    end
+  end
+
+  # read the rest of the file in chunks until EOF. (`:file.read(fd, :all)` is NOT
+  # valid — it returns {:error, :badarg}, which silently skipped every file ≥64 KB.)
+  defp read_rest(fd, acc) do
+    case :file.read(fd, 1_048_576) do
+      {:ok, chunk} -> read_rest(fd, [acc, chunk])
+      :eof -> {:ok, IO.iodata_to_binary(acc)}
+      other -> other
+    end
+  end
+
   def read_checked(path) do
     case :file.open(path, [:read, :binary, :raw]) do
       {:ok, fd} ->
         result =
-          case :file.read(fd, @prefix) do
+          case read_prefix(fd, <<>>) do
             {:ok, prefix} ->
               if :binary.match(prefix, <<0>>) != :nomatch do
                 :skip
@@ -54,9 +77,8 @@ defmodule ExGrep do
                 if byte_size(prefix) < @prefix do
                   {:ok, prefix}
                 else
-                  case :file.read(fd, :all) do
+                  case read_rest(fd, []) do
                     {:ok, rest} -> {:ok, prefix <> rest}
-                    :eof -> {:ok, prefix}
                     {:error, _} -> :skip
                   end
                 end

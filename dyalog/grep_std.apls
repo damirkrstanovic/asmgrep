@@ -1,0 +1,133 @@
+⍝ dyalogrep_std - literal (fixed-string) grep clone in Dyalog APL (dyalogscript).
+⍝ Mirrors python/grep_std.py byte-for-byte against `grep -F`.
+⍝
+⍝ Byte-exact I/O on a real, stable APL:
+⍝   read  : name ⎕NTIE 0 ; ⎕UCS ⎕NREAD tie 80 size 0   (type 80 = 1-byte chars;
+⍝           ⎕UCS -> UNSIGNED 0..255, NUL-safe. type 83 is SIGNED, would break >127)
+⍝   walk  : ⎕NINFO⍠('Wildcard' 1)('Follow' 0)  (1=dir 2=file; Follow 0 skips symlinks)
+⍝   write : (⎕UCS bytes) ⎕NAPPEND tie 80   (1 byte/codepoint -> byte-exact for 0..255)
+⍝   exit  : ⎕OFF 0|1|2
+⍝ dyalogscript stdout is a non-seekable pipe (⎕NAPPEND can't write it), so the
+⍝ launcher injects a temp-file path as the first arg; we ⎕NAPPEND output there and
+⍝ the launcher cats it. Real grep args follow (index 2..).
+
+⎕IO←0 ⋄ ⎕ML←1
+
+NL←10
+OUT←⍬          ⍝ output byte accumulator
+MATCHED←0      ⍝ any file matched?
+
+⍝ ASCII lower-case fold (A..Z -> +32) on an unsigned byte vector
+∇r←lcase b
+ r←b+32×(b≥65)∧b≤90
+∇
+
+⍝ whole file as UNSIGNED byte vector; ⍬ on empty/unreadable
+∇bytes←readbytes name;tie;sz
+ bytes←⍬
+ :Trap 0
+  tie←name ⎕NTIE 0
+  sz←⎕NSIZE tie
+  :If sz>0 ⋄ bytes←⎕UCS ⎕NREAD tie 80 sz 0 ⋄ :EndIf
+  ⎕NUNTIE tie
+ :EndTrap
+∇
+
+⍝ search bytes of one file; path is a char vector; appends matching lines to OUT
+∇path searchbytes data;n;peek;hay;needle;hits;starts;nlpos;s;ls;le;lastle;before;after
+ n←≢data
+ :If n=0 ⋄ →0 ⋄ :EndIf
+ peek←(65536⌊n)↑data
+ :If ∨/peek=0 ⋄ →0 ⋄ :EndIf                 ⍝ NUL in first 64K => binary, skip
+ :If CI ⋄ hay←lcase data ⋄ needle←LPAT ⋄ :Else ⋄ hay←data ⋄ needle←PAT ⋄ :EndIf
+ nlpos←⍸data=NL                             ⍝ newline byte positions
+ :If 0=≢needle
+  starts←0,1+nlpos                          ⍝ empty pattern: each line start...
+  starts←(starts<n)/starts                  ⍝ ...but not the phantom after a final NL
+ :Else
+  hits←needle⍷hay                           ⍝ 1 at each match-start
+  starts←⍸hits
+ :EndIf
+ :If 0=≢starts ⋄ →0 ⋄ :EndIf
+ lastle←¯1
+ :For s :In starts
+  :If (s=n)∧(n>0)∧NL=data[n-1] ⋄ :Leave ⋄ :EndIf   ⍝ phantom-line guard
+  before←(nlpos<s)/nlpos
+  ls←0 ⋄ :If 0<≢before ⋄ ls←1+⊃⌽before ⋄ :EndIf     ⍝ prev '\n'+1 (or 0)
+  after←(nlpos≥s)/nlpos
+  le←n ⋄ :If 0<≢after ⋄ le←⊃after ⋄ :EndIf          ⍝ next '\n' (or n)
+  :If le=lastle ⋄ :Continue ⋄ :EndIf               ⍝ one emission per matching line
+  lastle←le
+  MATCHED←1
+  :If MULTI ⋄ OUT,←(⎕UCS path),58 ⋄ :EndIf         ⍝ "PATH:"
+  OUT,←(data[ls+⍳le-ls]),NL
+ :EndFor
+∇
+
+∇searchfile path
+ path searchbytes readbytes path
+∇
+
+⍝ recursive walk: skip symlinks (Follow 0), recurse dirs (type 1), search files (type 2)
+∇walk dir;names;types;i;child;ty
+ :Trap 0
+  names←⊃0(⎕NINFO⍠('Wildcard' 1)('Follow' 0))dir,'/*'   ⍝ ⊃ discloses the enclosed list
+  types←⊃1(⎕NINFO⍠('Wildcard' 1)('Follow' 0))dir,'/*'
+ :Else
+  →0
+ :EndTrap
+ :For i :In ⍳≢names
+  child←i⊃names
+  ty←i⊃types
+  :If ty=1 ⋄ walk child
+  :ElseIf ty=2 ⋄ searchfile child
+  :EndIf
+ :EndFor
+∇
+
+∇Usage
+ ⎕OFF 2
+∇
+
+∇main;args;outpath;rest;ci;rflag;nomore;pat;pfound;paths;a;flags;c;ty;p;tie
+ args←2 ⎕NQ'.' 'GetCommandLineArgs'
+ outpath←1⊃args                             ⍝ launcher-injected temp output path
+ rest←2↓args                                ⍝ real grep args
+ ci←0 ⋄ rflag←0 ⋄ nomore←0 ⋄ pat←'' ⋄ pfound←0 ⋄ paths←⍬
+ :For a :In rest
+  :If (~nomore)∧('-'=⊃a)∧(a≢,'-')
+   :If a≡'--' ⋄ nomore←1
+   :Else
+    flags←1↓a
+    :For c :In flags
+     :If c='i' ⋄ ci←1
+     :ElseIf c='r' ⋄ rflag←1
+     :Else ⋄ Usage
+     :EndIf
+    :EndFor
+   :EndIf
+  :ElseIf pfound=0 ⋄ pat←a ⋄ pfound←1
+  :Else ⋄ paths,←⊂a
+  :EndIf
+ :EndFor
+ :If (pfound=0)∨(0=≢paths) ⋄ Usage ⋄ :EndIf
+
+ CI←ci ⋄ RFLAG←rflag ⋄ MULTI←rflag∨1<≢paths
+ PAT←⎕UCS pat ⋄ LPAT←lcase PAT
+
+ :For p :In paths
+  :Trap 0 ⋄ ty←1 ⎕NINFO p ⋄ :Else ⋄ ty←0 ⋄ :EndTrap   ⍝ follow symlinks at top level
+  :If ty=1 ⋄ :If RFLAG ⋄ walk p ⋄ :EndIf
+  :ElseIf ty=2 ⋄ searchfile p
+  :EndIf
+ :EndFor
+
+ :If 0<≢OUT
+  tie←outpath ⎕NTIE 0
+  (⎕UCS OUT) ⎕NAPPEND tie 80
+  ⎕NUNTIE tie
+ :EndIf
+ :If MATCHED ⋄ ⎕OFF 0 ⋄ :Else ⋄ ⎕OFF 1 ⋄ :EndIf
+∇
+
+main

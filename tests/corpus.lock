@@ -1,0 +1,17 @@
+# asmgrep benchmark corpus — PINNED for fair, repeatable measurement.
+# Each row: NAME  CLONE_URL  COMMIT_SHA   (everything after is a comment)
+# Public repos only, pinned to an exact commit so the corpus is byte-identical
+# for anyone. Chosen as a size + file-count + language spread: small repos are
+# startup-dominated, huge ones (jdk) are scan- and page-fault-dominated.
+#
+# Fetch/verify with:  tests/fetch_corpus.sh          (clones missing, checks SHAs)
+# Benchmark with:     tests/compare.sh   /  tests/leaderboard.sh
+# Override location:  CORPUS_DIR=/path tests/fetch_corpus.sh   (default /home/damirk/src)
+#
+# NAME         URL                                          SHA                                        # size(src) files  lang
+camilladsp     https://github.com/HEnquist/camilladsp       05e9cfcdf43c0dfe078ed3feb8af4c8bd701fd74   # 2.1M   145    Rust   (tiny / startup-dominated extreme)
+jellyfin       https://github.com/jellyfin/jellyfin         8b387c82cf8011c0df0efb56ee7aaa97063ee869   # 20M    2464   C#
+navidrome      https://github.com/navidrome/navidrome       9a2eb483e8e9ed21c75ebadccab59fe35ad40cd2   # 21M    1841   Go     (README small anchor)
+onyx           https://github.com/onyx-dot-app/onyx         71bd643537ce60d9d87ec5c4d4ff0873930e1504   # 43M    2552   Python/TS
+immich         https://github.com/immich-app/immich         3c108a8d22d675c20d6ce0782313c11fd0404882   # 122M   3771   TS     (README large anchor)
+jdk            https://github.com/openjdk/jdk               2e179fec7b5113a3b526ee4ad5c66d6b7f0179e2   # 809M   70779  Java/C++ (jdk-28+3; huge / file-count extreme)

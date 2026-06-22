@@ -40,7 +40,17 @@ function workerRun() {
     out.copy(nb, 0, 0, outLen);
     out = nb;
   }
-  function flush() { if (outLen) { writeSync(1, out, 0, outLen); outLen = 0; } }
+  // loop on partial writes: when stdout is a full pipe, writeSync writes fewer
+  // bytes than requested; the remainder must be retried or output is silently lost
+  // (worse with N workers racing on one fd). EAGAIN on a non-blocking fd → retry.
+  function flush() {
+    let off = 0;
+    while (off < outLen) {
+      try { off += writeSync(1, out, off, outLen - off); }
+      catch (e) { if (e.code === "EAGAIN") continue; throw e; }
+    }
+    outLen = 0;
+  }
 
   // REUSED per-worker buffers, grown to the largest file seen and never freed.
   let rbuf = Buffer.allocUnsafe(PEEK_SIZE);
@@ -88,7 +98,7 @@ function workerRun() {
         if (k === 0) break;
         got += k;
       }
-      if (got > 0 && isBinaryPrefix(rbuf, got)) { closeSync(fd); continue; } // binary: rest unread
+      if (got > 0 && isBinaryPrefix(rbuf, got)) { continue; } // binary: rest unread (finally closes fd)
       // not binary (or short): read the rest only now
       len = readRest(fd, got);
     } finally {

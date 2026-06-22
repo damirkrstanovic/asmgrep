@@ -39,7 +39,17 @@ function workerRun() {
     out.copy(nb, 0, 0, outLen);
     out = nb;
   }
-  function flush() { if (outLen) { writeSync(1, out, 0, outLen); outLen = 0; } }
+  // loop on partial writes: a full stdout pipe makes writeSync write fewer bytes
+  // than asked; the rest must be retried or output is silently lost (worse with N
+  // workers racing on one fd). EAGAIN on a non-blocking fd → retry.
+  function flush() {
+    let off = 0;
+    while (off < outLen) {
+      try { off += writeSync(1, out, off, outLen - off); }
+      catch (e) { if (e.code === "EAGAIN") continue; throw e; }
+    }
+    outLen = 0;
+  }
 
   let lowerScratch = Buffer.allocUnsafe(0);
   let matched = false;

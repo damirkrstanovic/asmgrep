@@ -159,6 +159,13 @@ $(BIN)/pygrep_std: python/grep_std.py python/grep_mt.py python/grep_mt_tuned.py 
 	printf '#!/bin/sh\nexec python3 $(CURDIR)/python/grep_mt_tuned.py "$$@"\n' > $(BIN)/pygrep_std_mt_tuned
 	chmod +x $(BIN)/pygrep_std $(BIN)/pygrep_std_mt $(BIN)/pygrep_std_mt_tuned
 
+# PyPy: the SAME python/grep_std.py source, run under PyPy's tracing JIT instead of
+# CPython. No code changes -- the cleanest "same source, different runtime" data
+# point in the board (isolates runtime model from language/algorithm).
+pypy: $(BIN)/pypygrep_std
+$(BIN)/pypygrep_std: python/grep_std.py | $(BIN)
+	printf '#!/bin/sh\nexec pypy3 $(CURDIR)/python/grep_std.py "$$@"\n' > $@ && chmod +x $@
+
 # GNU awk: the text-DSL built for exactly this -- index() literal scan + readdir
 # walk -- but no threads/no concurrency, so _std only (the missing _mt is a finding).
 awk: $(BIN)/awkgrep_std
@@ -193,7 +200,97 @@ js: js/grep_std.mjs js/grep_mt.mjs js/grep_mt_tuned.mjs js/grep_core.mjs | $(BIN
 	         $(BIN)/bungrep_std  $(BIN)/bungrep_std_mt  $(BIN)/bungrep_std_mt_tuned \
 	         $(BIN)/denogrep_std $(BIN)/denogrep_std_mt $(BIN)/denogrep_std_mt_tuned
 
-scripting: python awk lua js
+# Perl 5: idiomatic single-threaded -- recursive readdir walk + C-backed index()
+# literal scan + tr/// ASCII case-fold. _std only for now (Perl has cheap fork()
+# like LuaJIT; an _mt fork-pool variant is the natural follow-up).
+perl: $(BIN)/perlgrep_std
+$(BIN)/perlgrep_std: perl/grep_std.pl | $(BIN)
+	printf '#!/bin/sh\nexec perl $(CURDIR)/perl/grep_std.pl "$$@"\n' > $@ && chmod +x $@
+
+# Ruby (CRuby): idiomatic single-threaded -- ASCII-8BIT binread + C-backed
+# String#index scan + tr case-fold. Completes the Ruby->Crystal arc (same source
+# family, opposite runtime). _std only for now (fork()-pool _mt is the follow-up,
+# mirroring the Python finding).
+ruby: $(BIN)/rubygrep_std
+$(BIN)/rubygrep_std: ruby/grep_std.rb | $(BIN)
+	printf '#!/bin/sh\nexec ruby $(CURDIR)/ruby/grep_std.rb "$$@"\n' > $@ && chmod +x $@
+
+# Bash: the pure-shell floor -- line-at-a-time read + [[ == *pat* ]] glob test +
+# ${,,} case-fold + read -d '' NUL detect. No concurrency primitive at all (like
+# gawk), so _std only -- and that's the finding. Expected bottom-of-board.
+bash: $(BIN)/bashgrep_std
+$(BIN)/bashgrep_std: bash/grep_std.sh | $(BIN)
+	printf '#!/bin/sh\nexec bash $(CURDIR)/bash/grep_std.sh "$$@"\n' > $@ && chmod +x $@
+
+# Raku (Rakudo / MoarVM): Perl's successor on a bytecode VM. Whole-file slurp(:bin)
+# -> Buf, latin-1 round-trip for 1-char-per-byte, .trans case-fold. The MoarVM
+# startup tax dominates a short-lived process (sorts like Julia/JVM cold-start),
+# which is the finding -- not the language. _std only.
+raku: $(BIN)/rakugrep_std
+$(BIN)/rakugrep_std: raku/grep_std.raku | $(BIN)
+	printf '#!/bin/sh\nexec raku $(CURDIR)/raku/grep_std.raku "$$@"\n' > $@ && chmod +x $@
+
+# Forth (gforth 0.7.3): the interpreted stack-language floor -- whole-file read +
+# hand-written byte-at-a-time substring scan (no library search, no SIMD), open-dir
+# walk. No concurrency primitive (like awk/bash), so _std only -- that's the finding.
+# Symlinks not skipped in the walk (gforth has no portable lstat); fixtures have none.
+forth: $(BIN)/forthgrep_std
+$(BIN)/forthgrep_std: forth/grep_std.fs | $(BIN)
+	printf '#!/bin/sh\nexec gforth $(CURDIR)/forth/grep_std.fs "$$@"\n' > $@ && chmod +x $@
+
+scripting: python pypy awk lua js perl ruby raku bash forth
+
+# ----------------------------------------------------------------------------
+# AOT-compiled / VM / array-language outliers. Each adds a distinct runtime model:
+# Dart (native exe), Codon (Python-syntax -> native, the "loop-closer" for python),
+# Scala-Native (LLVM AOT off the JVM), Rust->WASI (sandboxed wasm under wasmtime),
+# and J (array-language interpreter). All _std only.
+# ----------------------------------------------------------------------------
+
+# Dart -> native self-contained exe (dart:io, Uint8List byte scan).
+dart: $(BIN)/dartgrep_std
+$(BIN)/dartgrep_std: dart/grep_std.dart | $(BIN)
+	dart compile exe $(CURDIR)/dart/grep_std.dart -o $@
+
+# Codon: Python *syntax* AOT-compiled to a native binary (LLVM). Same shape as
+# python/grep_std.py but str-is-bytes + libc FFI for stat/dirent. The native
+# "loop-closer" for the CPython/PyPy rows -- isolates runtime from syntax.
+codon: $(BIN)/codongrep_std
+$(BIN)/codongrep_std: codon/grep_std.py | $(BIN)
+	codon build --release --exe -o $@ $(CURDIR)/codon/grep_std.py
+
+# Scala-Native: the SAME Scala you'd run on the JVM, AOT-compiled via LLVM (no JVM,
+# no startup tax). //> using directives in the source select native + release-fast.
+# Pairs against a JVM Scala the way GraalVM-native pairs against JVM Java.
+scala-native: $(BIN)/scalagrep_std
+$(BIN)/scalagrep_std: scala-native/grep_std.scala | $(BIN)
+	scala-cli --power package --native $(CURDIR)/scala-native/grep_std.scala -o $@ -f
+	rm -rf $(CURDIR)/scala-native/.scala-build
+
+# Rust -> wasm32-wasip1, run under wasmtime. WASI is capability-sandboxed, so the
+# launcher preopens host root (--dir /::/) for the guest's std::fs. Measures the
+# wasm sandbox tax on otherwise-native Rust.
+wasm: $(BIN)/wasmgrep_std
+$(BIN)/wasmgrep_std: wasm/grep_std.rs | $(BIN)
+	rustc --edition 2021 --target wasm32-wasip1 -O -o $(CURDIR)/wasm/grep_std.wasm $(CURDIR)/wasm/grep_std.rs
+	printf '#!/bin/sh\nexec wasmtime run --dir /::/ $(CURDIR)/wasm/grep_std.wasm -- "$$@"\n' > $@ && chmod +x $@
+
+# J (jsoftware): array language. needle E. haystack literal scan, 1!:1 whole-file
+# read, recursive 1!:0 walk. Interpreter launched via jconsole; binary is named
+# ijsgrep_std (J source ext .ijs) to avoid colliding with Java's jgrep_std.
+j: $(BIN)/ijsgrep_std
+$(BIN)/ijsgrep_std: j/grep_std.ijs | $(BIN)
+	printf '#!/bin/sh\nexec /home/damirk/j9.7/bin/jconsole $(CURDIR)/j/grep_std.ijs "$$@" </dev/null\n' > $@ && chmod +x $@
+
+# Dyalog APL (dyalogscript): the canonical APL, and a STABLE one -- unlike the
+# machine's broken gnu-apl build (GNU APL attempted+abandoned, see RESULTS.md). Native ⍷
+# (Find) is C-backed (fast scan, like J's E.), but ~313 ms interpreter boot makes
+# it startup-bound (Raku/Julia class). Byte-exact via ⎕NREAD/⎕NAPPEND type 80 +
+# ⎕UCS. dyalogscript stdout is a non-seekable pipe, so the launcher injects a temp
+# file the script writes into, then cats it (exit code via ⎕OFF). _std only.
+dyalog: $(BIN)/dyalogrep_std
+$(BIN)/dyalogrep_std: dyalog/grep_std.apls | $(BIN)
+	printf '#!/bin/sh\nout="$$(mktemp)"\ndyalogscript $(CURDIR)/dyalog/grep_std.apls "$$out" "$$@" 2>/dev/null\nrc=$$?\ncat "$$out"\nrm -f "$$out"\nexit "$$rc"\n' > $@ && chmod +x $@
 
 # ----------------------------------------------------------------------------
 # Hosted / JVM languages: compile to bytecode, run via `java`. A tiny launcher
@@ -409,5 +506,6 @@ compare: all
 
 clean:
 	rm -rf $(BIN)
+	rm -rf scala-native/.scala-build wasm/grep_std.wasm
 
-.PHONY: all asm c zig test bench compare clean java kotlin clojure jvm odin lisp haskell ocaml pascal ada fortran d csharp-aot cpp python awk lua js scripting graalvm crystal elixir swift red pony nim julia chapel clojure-native
+.PHONY: all asm c zig test bench compare clean java kotlin clojure jvm odin lisp haskell ocaml pascal ada fortran d csharp-aot cpp python awk lua js scripting graalvm crystal elixir swift red pony nim julia chapel clojure-native perl ruby bash pypy raku forth dart codon scala-native wasm j dyalog

@@ -861,6 +861,80 @@ boot). The advertised concurrency was never the bottleneck — it worked every t
 everywhere in this repo, by the *other* pillars: the scan algorithm and the runtime's startup model. The
 flashy feature on the box is never the one that decides the race.
 
+## Twelve more: the scripting floor, exotic VMs, AOT loop-closers, and array/APL/stack languages (2026-06-21)
+
+Twelve implementations in one batch, chosen to fill gaps in the runtime-model map rather than the
+language map: **Perl**, **Ruby**, **Bash** (the scripting/shell floor); **PyPy** and **Codon** (the same
+Python source under a tracing JIT and an LLVM AOT compiler — two more loop-closers); **Raku** (MoarVM);
+**Dart** and **Scala-Native** (more native AOT); **Rust→WASI** (the wasm sandbox tax on native code);
+**J** and **Dyalog APL** (array / canonical-APL); and **Forth** (the interpreted stack-language floor).
+All pass the 16-case byte-exactness harness (`tests/verify_impl.sh`) `passed: 16 failed: 0`.
+
+### Methodology note — a *different* corpus from the leaderboard above
+
+These were measured on a **freshly generated synthetic tree** (`/tmp/benchtree`: 3,600 text files in 60
+dirs, ~36 MB, plus an 8 MB binary blob to skip; pattern on ~1 line in 800), **not** the repo corpus
+(navidrome/immich) the main leaderboard uses. They are an *internally consistent* set — read the ordering,
+not the absolute multiplier against the other tables. Calibration anchors on this same tree: **GNU grep
+19.4 ms** (baseline), **Python (CPython) 4.5×**, **Perl 4.7×**, **awk 105×** — versus the repo-corpus
+leaderboard's Python 10.6× / awk 80.7×. The corpora weight startup-vs-scan differently (more, smaller
+files here), so the multipliers shift; the runtime-model *ordering* is what survives.
+
+`-r -i` recursive case-insensitive, `hyperfine --warmup 2 --runs 6 -N`; startup = same binary on one
+0.5 KB file, 8 runs.
+
+| impl | ×grep (36 MB tree) | startup | runtime model |
+|---|--:|--:|---|
+| **Codon** | **7.0×** | 8.5 ms | Python *syntax*, AOT-compiled to native via LLVM — the native loop-closer for the CPython/PyPy rows |
+| **Ruby** (CRuby) | **7.5×** | 45 ms | interpreted, but `String#index`/`tr` are C — scan is C-backed, glue is interpreter |
+| **J** (jsoftware) | **8.6×** | 54 ms | array language; `needle E. haystack` is a C primitive ⇒ lands in the *native cluster*, not the interpreted floor |
+| **Rust→WASI** | **9.8×** | 14 ms | native Rust compiled to `wasm32-wasip1`, run under wasmtime; the delta over native Rust is the wasm sandbox + capability-`--dir` tax |
+| **Scala-Native** | **10.0×** | 2.0 ms | the same Scala you'd run on the JVM, AOT'd via LLVM — no JVM, no startup tax (cf. GraalVM for Java) |
+| **Dart** | **12.7×** | 2.6 ms | native self-contained exe (`dart compile exe`); idiomatic single-threaded scalar scan |
+| **Dyalog APL** | **22×** | 313 ms | the canonical APL (and a *stable* one); native `⍷` (Find) is C-backed so the scan is fast like J's `E.`, but ~313 ms interpreter boot makes it **startup-bound** (Raku/Julia class) |
+| **PyPy** | **71×** | 52 ms | the **unchanged** `python/grep_std.py` under PyPy's tracing JIT; the cleanest same-source/different-runtime point in the board — startup-bound on a short job |
+| **Bash** | **230×** | 3.4 ms | pure-shell floor: `read` line-at-a-time + `[[ == *pat* ]]` glob + `${,,}` fold; no concurrency primitive (the finding, like awk) |
+| **Raku** (Rakudo/MoarVM) | **471×** | 484 ms | Perl's successor on a bytecode VM whose **boot dominates** every short run — startup-bound, BEAM/Clojure-class |
+| **Forth** (gforth 0.7.3) | **>6000×** | 6.0 ms | the interpreted **bottom of the board**: a hand-written byte-at-a-time `c@` scan (no library search, no SIMD) takes **>120 s** to scan the 36 MB tree (49 ms on a 0.5 MB subtree) — sub-ms startup, but the scan is the runtime doing manual byte compares |
+
+Anchors for orientation (same tree): Perl **4.7×** (45 ms), Python **4.5×** (15 ms), awk **105×** (3.7 ms).
+
+**What the batch confirms.** The runtime model predicts placement again, including two surprises that *cut
+against* a naive "interpreter = slow" reading: **J**, an array language, lands in the native cluster
+because its substring primitive (`E.`) is compiled C — the scan is the only hot work and it isn't
+interpreted. **Forth**, by contrast, is the floor *precisely because* its scan is hand-written interpreted
+byte comparison — same "interpreted language" label, opposite result, decided entirely by whether the hot
+loop bottoms out in C or in the interpreter. **PyPy** and **Codon** are the Python loop-closers: identical
+`grep_std.py` semantics, but Codon (AOT→native) is ~10× faster than PyPy here, and PyPy is startup-bound on
+short jobs — the source never changed, only the runtime. And **Raku** joins the startup-bound VM tier
+(MoarVM ~480 ms boot, alongside Elixir/Clojure/Julia), while **Bash** joins awk as a no-concurrency-primitive
+floor. None of these orderings are about syntax.
+
+**The APL twist — same scan primitive, opposite placement from J.** Dyalog's `⍷` (Find), like J's `E.`,
+is a compiled-C array primitive, so the *scan* is fast in both. Yet J lands in the native cluster (8.6×,
+54 ms startup) and Dyalog is startup-bound (22×, **313 ms** interpreter boot). Two array languages, the
+same fast C scan, sorted apart **entirely by their startup model** — the thesis again, now within the
+array-language family itself.
+
+**Two `_std`-only findings.** Bash and Forth (like awk and Red) have **no idiomatic concurrency primitive**
+at all, so they ship `_std` only — the *absence* of an `_mt` row is itself the data point. J and Dyalog
+ship `_std` only for the same reason (no idiomatic shared-memory parallelism in the launched-interpreter
+model).
+
+**GNU APL — attempted, abandoned for a broken local build; not included (Dyalog used instead).** A
+byte-exact GNU APL implementation was written and is *correct* (right output + exit codes when it runs),
+but the machine's locally-built `gnu-apl 1.9-1` has genuine out-of-bounds `std::vector` accesses (latent
+UB) that CachyOS's hardened `-D_GLIBCXX_ASSERTIONS` build turns into **non-deterministic aborts on ~⅔ of
+all runs** — even trivial pure-compute programs. Rebuilding with assertions stripped stops the *aborts*
+but the UB then surfaces as **segfaults** on multi-path runs, so it can't pass the harness either; it is
+left out of the suite entirely. The canonical-APL slot is instead filled by **Dyalog
+APL** (`dyalog/grep_std.apls`), which is rock-solid: 16/16, deterministic across repeated runs. (GNU APL
+debugging notes, preserved because they were hard-won: its `fread`/`⎕FIO[6]` returns a *scalar 0* at EOF,
+not an empty vector, silently turning a chunked read loop into an unbounded `buf,chunk` → `WS FULL`;
+`)OFF` cannot appear inside a tradfn body; the lone reliable exit is top-level `⍎')OFF ',⍕RC`. By contrast
+Dyalog's I/O is mature and unsurprising: `⎕NREAD`/`⎕NAPPEND` type 80 + `⎕UCS` for byte-exact unsigned I/O,
+`⎕NINFO⍠('Wildcard' 1)('Follow' 0)` for a symlink-skipping walk, `⎕OFF n` for exit codes.)
+
 ## Optimizations implemented
 
 | technique | effect |

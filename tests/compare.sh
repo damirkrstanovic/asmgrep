@@ -13,19 +13,26 @@
 #   PATTERN default: "error"   (literal, case-insensitive)
 #   repos    default: a curated size-spread under /home/damirk/src
 set -u
+# Byte-level matching for ALL tools: our impls read raw bytes (literal grep -F
+# semantics), so the reference must too. In a UTF-8 locale GNU grep's -i skips
+# matches on lines with invalid-UTF-8 bytes (e.g. jdk's tradChinese.po), which
+# would spuriously fail the correctness gate. LC_ALL=C makes grep/rg byte-exact
+# (and a touch faster, uniformly). Impls are locale-independent, so unaffected.
+export LC_ALL=C
 
-SRC=/home/damirk/src
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+CORPUS_DIR="${CORPUS_DIR:-/home/damirk/src}"   # where the pinned checkouts live
+LOCK="$ROOT/tests/corpus.lock"
 ASM="$ROOT/bin/asmgrep"
 GREP=/usr/bin/grep
 RG=/usr/bin/rg
 PAT="${1:-error}"; [ $# -gt 0 ] && shift
 
+# default repo set = the pinned, reproducible corpus (tests/corpus.lock);
+# override by passing repo names as args. Run tests/fetch_corpus.sh first.
 REPOS=("$@")
 if [ "${#REPOS[@]}" -eq 0 ]; then
-  REPOS=(archy linuxutil gst-rtsp-server potemkin gdd snapcast navidrome \
-         omarchy anchor-core camilladsp trustgraph jellyfin gaia graph-finder \
-         cognee onyx immich)
+  mapfile -t REPOS < <(grep -vE '^[[:space:]]*#|^[[:space:]]*$' "$LOCK" | awk '{print $1}')
 fi
 
 # aligned invocations (same file set, skip binary, case-insensitive fixed string)
@@ -45,7 +52,7 @@ echo "--------------------------------------------------------------------------
 sum_g=0; sum_r=0; cnt=0; mism=0
 
 for repo in "${REPOS[@]}"; do
-  dir="$SRC/$repo"
+  dir="$CORPUS_DIR/$repo"
   [ -d "$dir" ] || { printf '%-18s  (missing)\n' "$repo"; continue; }
   size=$(du -sh "$dir" 2>/dev/null | cut -f1)
 
