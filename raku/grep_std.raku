@@ -27,35 +27,61 @@ sub search-file(Str $path, Str $pat, Str $lpat, Bool $ci, Bool $multi, @out --> 
         return False if $buf[$i] == 0;
     }
 
-    # Work line-by-line at the BYTE level. Decoding the whole buffer to a Str
-    # is unsafe: Raku strings are grapheme-normalized (NFG), so a "\r\n" byte
-    # pair becomes ONE grapheme -- char positions then drift from byte
-    # positions and .index("\n") never finds CRLF line ends, collapsing the
-    # scan. Splitting on \n (0x0A) bytes first means each segment has no
-    # "\r\n" adjacency, so decoding it to latin-1 stays 1 char == 1 byte.
     my $needle = $ci ?? $lpat !! $pat;
     my Int $nlen = $needle.chars;
-
     my Bool $matched = False;
-    my int $ls = 0;
-    while $ls < $n {
-        my int $le = $ls;
-        while $le < $n && $buf[$le] != 0x0A {
-            $le = $le + 1;
-        }
-        # line bytes [$ls, $le); the trailing \r (CRLF) stays in the line, as grep keeps it
-        my $line = $buf.subbuf($ls, $le - $ls).decode('latin-1');
-        my $hay  = $ci ?? fold-ascii($line) !! $line;
-        if $nlen == 0 || $hay.contains($needle) {
-            $matched = True;
-            if $multi {
-                @out.push($path);
-                @out.push(":");
+
+    # Decoding the whole buffer to a Str is unsafe in general: Raku strings are
+    # grapheme-normalized (NFG), so a "\r\n" byte pair (or any multibyte/
+    # combining sequence) collapses into ONE grapheme -- char positions then
+    # drift from byte positions and .index("\n") never finds CRLF line ends.
+    # BUT when no merging happened, $data.chars == byte count, char positions
+    # ARE byte positions, and the fast native scan is exact. That holds for the
+    # overwhelming majority (ASCII / LF-only source). Fall back to a byte-level
+    # line scan only for the rest (CRLF, multibyte), preserving byte-exactness.
+    my $data = $buf.decode('latin-1');
+
+    if $data.chars == $n {
+        # FAST PATH: 1 grapheme == 1 byte, native .index scan is byte-exact.
+        my $hay = $ci ?? fold-ascii($data) !! $data;
+        my int $pos = 0;
+        loop {
+            last if $pos > $n;
+            my $m = $hay.index($needle, $pos);
+            last if !$m.defined;
+            last if $m == $n && $n > 0 && $data.substr($n - 1, 1) eq "\n";
+            my $ls = 0;
+            if $m > 0 {
+                my $prev = $data.rindex("\n", $m - 1);
+                $ls = $prev.defined ?? $prev + 1 !! 0;
             }
-            @out.push($line);
+            my $end = $data.index("\n", $m);
+            $end = $end.defined ?? $end !! $n;
+            $matched = True;
+            if $multi { @out.push($path); @out.push(":"); }
+            @out.push($data.substr($ls, $end - $ls));
             @out.push("\n");
+            $pos = $end + 1;
         }
-        $ls = $le + 1;   # skip the \n
+    } else {
+        # SAFE PATH: scan line-by-line at the byte level. Splitting on \n (0x0A)
+        # bytes first means each segment has no "\r\n" adjacency, so decoding it
+        # to latin-1 stays 1 char == 1 byte. The trailing \r (CRLF) stays in the
+        # line, exactly as grep keeps it.
+        my int $ls = 0;
+        while $ls < $n {
+            my int $le = $ls;
+            while $le < $n && $buf[$le] != 0x0A { $le = $le + 1; }
+            my $line = $buf.subbuf($ls, $le - $ls).decode('latin-1');
+            my $hay  = $ci ?? fold-ascii($line) !! $line;
+            if $nlen == 0 || $hay.contains($needle) {
+                $matched = True;
+                if $multi { @out.push($path); @out.push(":"); }
+                @out.push($line);
+                @out.push("\n");
+            }
+            $ls = $le + 1;
+        }
     }
     return $matched;
 }
