@@ -71,7 +71,8 @@ echo "# impls: ${#BINLIST[@]}   timeout: ${TIMEOUT}s   governor: $(cat /sys/devi
 echo
 
 # --- GNU grep baseline once per repo (the shared denominator) + a tiny startup file
-declare -A GREP_MS REPO_OK
+# GREP_REL[repo] = relative stddev (σ/μ) of the baseline, fed into the ×grep error bar.
+declare -A GREP_MS GREP_REL REPO_OK
 SMALLFILE=""
 echo "# timing GNU grep baseline per repo..."
 for repo in "${REPOS[@]}"; do
@@ -79,9 +80,10 @@ for repo in "${REPOS[@]}"; do
   [ -d "$dir" ] || { echo "#   skip $repo (missing under $CORPUS_DIR)"; continue; }
   REPO_OK[$repo]=1
   [ -z "$SMALLFILE" ] && SMALLFILE="$(find "$dir" -type f -size +1k -size -8k 2>/dev/null | head -1)"
-  hyperfine --warmup 2 -M 10 -N --ignore-failure "$GREP -rIiF $PAT $dir" --export-json /tmp/_lbg.json >/dev/null 2>&1
-  GREP_MS[$repo]=$(python3 -c "import json;print('%.3f'%(json.load(open('/tmp/_lbg.json'))['results'][0]['mean']*1000))" 2>/dev/null)
-  echo "#   grep $repo = ${GREP_MS[$repo]} ms"
+  hyperfine --warmup 2 -M 12 -N --ignore-failure "$GREP -rIiF $PAT $dir" --export-json /tmp/_lbg.json >/dev/null 2>&1
+  GREP_MS[$repo]=$(python3 -c "import json;r=json.load(open('/tmp/_lbg.json'))['results'][0];print('%.3f'%(r['mean']*1000))" 2>/dev/null)
+  GREP_REL[$repo]=$(python3 -c "import json;r=json.load(open('/tmp/_lbg.json'))['results'][0];print('%.5f'%(r['stddev']/r['mean'] if r['mean'] else 0))" 2>/dev/null)
+  echo "#   grep $repo = ${GREP_MS[$repo]} ms  (±$(python3 -c "print('%.1f'%(100*${GREP_REL[$repo]:-0}))")%)"
 done
 echo
 
@@ -90,7 +92,7 @@ RESULT_FILE="$(mktemp)"
 OUTF="$(mktemp)"; trap 'rm -f "$OUTF" "$RESULT_FILE"' EXIT
 for b in "${BINLIST[@]}"; do
   [ -x "$BIN/$b" ] || continue
-  bt0=$(now); logsum=0; n=0; notes=""
+  bt0=$(now); logsum=0; n=0; notes=""; relvar=0; approx=0
   for repo in "${REPOS[@]}"; do
     [ "${REPO_OK[$repo]:-0}" = 1 ] || continue
     dir="$CORPUS_DIR/$repo"
@@ -116,15 +118,20 @@ for b in "${BINLIST[@]}"; do
       # hangs here (e.g. Dyalog sporadically spawning a Chromium HTMLRenderer
       # that never exits) would otherwise block the whole run indefinitely —
       # the probe run above is bounded, but hyperfine was not.
-      timeout -k 10 "$TIMEOUT" hyperfine --warmup 1 -M 5 -N --ignore-failure "$BIN/$b -r -i $PAT $dir" --export-json /tmp/_lbi.json >/dev/null 2>&1
+      timeout -k 10 "$TIMEOUT" hyperfine --warmup 1 --min-runs 10 -M 12 -N --ignore-failure "$BIN/$b -r -i $PAT $dir" --export-json /tmp/_lbi.json >/dev/null 2>&1
       im=$(python3 -c "import json;print('%.3f'%(json.load(open('/tmp/_lbi.json'))['results'][0]['mean']*1000))" 2>/dev/null)
+      imrel=$(python3 -c "import json;r=json.load(open('/tmp/_lbi.json'))['results'][0];print('%.5f'%(r['stddev']/r['mean'] if r['mean'] else 0))" 2>/dev/null)
     else
-      # slow → use the single bounded run we already paid for
+      # slow → use the single bounded run we already paid for (no repeats => no σ)
       im=$(python3 -c "print('%.3f'%($probe*1000))")
+      imrel="NA"
     fi
     gm="${GREP_MS[$repo]:-}"
     { [ -z "$im" ] || [ -z "$gm" ]; } && continue
     logsum=$(python3 -c "import math;print($logsum+math.log($im/$gm))")
+    # propagate relative uncertainty of this repo's ratio: (σ_impl/μ)² + (σ_grep/μ)²
+    if [ "$imrel" = "NA" ]; then approx=1; ir=0; else ir=$imrel; fi
+    relvar=$(python3 -c "print($relvar + $ir**2 + ${GREP_REL[$repo]:-0}**2)")
     n=$((n+1))
   done
   su=""
@@ -138,20 +145,23 @@ for b in "${BINLIST[@]}"; do
   bt1=$(now); IMPL_SECS[$b]=$(elapsed "$bt0" "$bt1")
   if [ "$n" -gt 0 ]; then
     xg=$(python3 -c "import math;print('%.2f'%math.exp($logsum/$n))")
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$xg" "$b" "${su:-?}" "$n/${#REPOS[@]}" "${IMPL_SECS[$b]}" "$notes" >> "$RESULT_FILE"
+    # ×grep is a geomean of ratios; its relative 1σ uncertainty is (1/n)·√Σ rel_var.
+    pct=$(python3 -c "import math;print('%.0f'%(100.0*math.sqrt($relvar)/$n))")
+    eb="±${pct}%"; [ "$approx" = 1 ] && eb="${eb}~"   # ~ : a slow repo had no σ (single run)
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$xg" "$eb" "$b" "${su:-?}" "$n/${#REPOS[@]}" "${IMPL_SECS[$b]}" "$notes" >> "$RESULT_FILE"
   else
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "99999" "$b" "${su:-?}" "0/${#REPOS[@]}" "${IMPL_SECS[$b]}" "${notes:- (none completed)}" >> "$RESULT_FILE"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "99999" "—" "$b" "${su:-?}" "0/${#REPOS[@]}" "${IMPL_SECS[$b]}" "${notes:- (none completed)}" >> "$RESULT_FILE"
   fi
-  printf '  done %-26s xgrep=%s  %ss\n' "$b" "$(tail -1 "$RESULT_FILE" | cut -f1)" "${IMPL_SECS[$b]}" >&2
+  printf '  done %-26s xgrep=%s %s  %ss\n' "$b" "$(tail -1 "$RESULT_FILE" | cut -f1)" "$(tail -1 "$RESULT_FILE" | cut -f2)" "${IMPL_SECS[$b]}" >&2
 done
 
 RUN_END=$(now); TOTAL=$(elapsed "$RUN_START" "$RUN_END")
 echo
-printf '%-26s %9s %8s %9s %8s  %s\n' IMPL xgrep startup repos secs notes
-printf -- '--------------------------------------------------------------------------------------\n'
-sort -t$'\t' -k1 -g "$RESULT_FILE" | while IFS=$'\t' read -r xg b su rr secs notes; do
+printf '%-26s %8s %7s %8s %9s %8s  %s\n' IMPL xgrep ±1σ startup repos secs notes
+printf -- '----------------------------------------------------------------------------------------------\n'
+sort -t$'\t' -k1 -g "$RESULT_FILE" | while IFS=$'\t' read -r xg eb b su rr secs notes; do
   [ "$xg" = "99999" ] && xg="—"
-  printf '%-26s %8sx %6sms %9s %7ss  %s\n' "$b" "$xg" "$su" "$rr" "$secs" "$notes"
+  printf '%-26s %7sx %7s %6sms %9s %7ss  %s\n' "$b" "$xg" "$eb" "$su" "$rr" "$secs" "$notes"
 done
 rm -f "$RESULT_FILE"
 echo "--------------------------------------------------------------------------------------"
@@ -159,3 +169,6 @@ printf 'pattern=%q  corpus=%d repos  timeout=%ss  baseline=GNU grep (-rIiF)\n' "
 echo "grep baseline (ms): $(for r in "${REPOS[@]}"; do printf '%s=%s ' "$r" "${GREP_MS[$r]:-NA}"; done)"
 printf 'TOTAL WALL-CLOCK: %s s  (%.1f min)\n' "$TOTAL" "$(python3 -c "print($TOTAL/60)")"
 echo "×grep = geomean(mean_impl/mean_grep) over completed repos; <1 = faster than grep. See docs/BENCHMARKING.md"
+echo "±1σ = propagated relative uncertainty of ×grep from hyperfine stddevs ((1/n)·√Σ[(σi/μi)²+(σg/μg)²]);"
+echo "      a trailing ~ means a slow repo was a single timed run (no σ), so the bar understates. Overlapping"
+echo "      bars between two impls => the ordering between them is not statistically meaningful."
