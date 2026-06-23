@@ -1,117 +1,116 @@
-# leaderboard run  2026-06-22 20:23:47
+# leaderboard run  2026-06-23 08:06:29
 # corpus: camilladsp jellyfin navidrome onyx immich jdk
 # impls: 48   timeout: 300s   governor: performance
 
 # timing GNU grep baseline per repo...
-#   grep camilladsp = 2.633 ms
-#   grep jellyfin = 26.414 ms
-#   grep navidrome = 14.682 ms
-#   grep onyx = 26.133 ms
-#   grep immich = 45.597 ms
-#   grep jdk = 849.237 ms
+#   grep camilladsp = 2.691 ms
+#   grep jellyfin = 27.180 ms
+#   grep navidrome = 15.385 ms
+#   grep onyx = 27.174 ms
+#   grep immich = 46.654 ms
+#   grep jdk = 872.206 ms
 
-  done asmgrep                    xgrep=0.17  2.506s
-  done cgrep                      xgrep=0.19  2.472s
-  done zgrep                      xgrep=0.20  2.452s
-  done gogrep                     xgrep=5.07  9.964s
-  done gogrep_mt                  xgrep=0.71  5.762s
-  done rustgrep                   xgrep=0.40  3.753s
-tests/leaderboard.sh: line 94: 19750 Segmentation fault         timeout -k 10 "$TIMEOUT" "$BIN/$b" -r -i "$PAT" "$dir" > "$OUTF" 2> /dev/null
-  done adagrep_std_mt_tuned       xgrep=2.13  4.016s
-  done awkgrep_std                xgrep=24.01  34.997s
-  done bashgrep_std               xgrep=175.83  248.532s
-  done bungrep_std_mt_tuned       xgrep=4.69  24.021s
-  done cgrep_std_mt               xgrep=0.54  4.846s
-  done chplgrep_std_mt_tuned      xgrep=3.02  15.099s
-  done clgrep_std_mt_tuned        xgrep=1.43  8.589s
-  done cljgraalgrep_std_mt_tuned  xgrep=6.55  12.809s
-  done cljgrep_std_mt_tuned       xgrep=23.68  28.694s
-  done codongrep_std              xgrep=5.67  22.047s
-  done cppgrep_std_mt_tuned       xgrep=0.62  5.139s
-  done crgrep_std_mt_tuned        xgrep=3.04  11.337s
-  done dartgrep_std               xgrep=10.81  17.474s
-  done denogrep_std_mt_tuned      xgrep=21.67  62.151s
-  done dgrep_std_mt_tuned         xgrep=2.70  10.867s
-  done dyalogrep_std              xgrep=20.19  24.736s
-  done exgrep_std_mt_tuned        xgrep=35.29  44.054s
-  done fortgrep_std_mt_tuned      xgrep=1.10  2.682s
-  done fpgrep_std_mt_tuned        xgrep=2.40  18.441s
-  done graalgrep_std_mt_tuned     xgrep=1.36  9.717s
-  done haskgrep_std_mt_tuned      xgrep=6.91  76.647s
-  done ijsgrep_std                xgrep=8.80  9.796s
-  done jgrep_std_mt_tuned         xgrep=10.31  21.475s
-  done jlgrep_std_mt_tuned        xgrep=28.19  35.322s
-  done ktgrep_std_mt_tuned        xgrep=11.90  28.403s
-  done ljgrep_std_mt_tuned        xgrep=0.88  7.892s
-  done nimgrep_std_mt_tuned       xgrep=3.24  12.853s
-  done nodegrep_std_mt_tuned      xgrep=6.62  9.750s
-  done ocgrep_std_mt_tuned        xgrep=1.39  9.923s
-  done odingrep_std_mt_tuned      xgrep=2.95  13.612s
-  done perlgrep_std               xgrep=6.15  9.641s
-  done ponygrep_std_mt_tuned      xgrep=2.55  16.090s
-  done pygrep_std_mt_tuned        xgrep=6.11  12.313s
-  done pypygrep_std               xgrep=11.36  15.213s
-  done rakugrep_std               xgrep=343.30  352.913s
-  done redgrep_std                xgrep=727.69  401.633s
-  done rubygrep_std               xgrep=7.93  11.160s
-  done scalagrep_std              xgrep=9.82  15.276s
-  done swiftgrep_std_mt_tuned     xgrep=2.54  10.650s
-  done wasmgrep_std               xgrep=7.68  11.880s
-  done zgrep_std_mt               xgrep=0.50  4.288s
-  done csgrep_aot_std_mt_tuned    xgrep=4.81  23.196s
+  done asmgrep                    xgrep=0.19  2.607s
+  done cgrep                      xgrep=0.20  2.633s
+  done zgrep                      xgrep=0.21  2.569s
+  done gogrep                     xgrep=5.17  25.579s
+  done gogrep_mt                  xgrep=0.68  5.729s
+  done rustgrep                   xgrep=0.39  3.793s
+  done adagrep_std_mt_tuned       xgrep=2.22  17.230s
+  done awkgrep_std                xgrep=23.80  36.109s
+  done bashgrep_std               xgrep=170.50  248.336s
+  done bungrep_std_mt_tuned       xgrep=4.63  23.828s
+  done cgrep_std_mt               xgrep=0.57  5.075s
+  done chplgrep_std_mt_tuned      xgrep=3.09  15.754s
+  done clgrep_std_mt_tuned        xgrep=1.35  9.435s
+  done cljgraalgrep_std_mt_tuned  xgrep=6.45  12.943s
+  done cljgrep_std_mt_tuned       xgrep=23.04  28.836s
+  done codongrep_std              xgrep=5.84  22.880s
+  done cppgrep_std_mt_tuned       xgrep=0.61  5.280s
+  done crgrep_std_mt_tuned        xgrep=3.06  11.819s
+  done dartgrep_std               xgrep=10.68  17.786s
+  done denogrep_std_mt_tuned      xgrep=20.89  57.745s
+  done dgrep_std_mt_tuned         xgrep=2.77  11.328s
+  done dyalogrep_std              xgrep=19.87  24.945s
+  done exgrep_std_mt_tuned        xgrep=34.65  44.558s
+  done fortgrep_std_mt_tuned      xgrep=1.08  8.457s
+  done fpgrep_std_mt_tuned        xgrep=2.39  18.929s
+  done graalgrep_std_mt_tuned     xgrep=1.36  10.090s
+  done haskgrep_std_mt_tuned      xgrep=6.69  77.496s
+  done ijsgrep_std                xgrep=8.78  12.578s
+  done jgrep_std_mt_tuned         xgrep=9.94  22.140s
+  done jlgrep_std_mt_tuned        xgrep=27.80  35.777s
+  done ktgrep_std_mt_tuned        xgrep=11.60  28.542s
+  done ljgrep_std_mt_tuned        xgrep=0.87  8.070s
+  done nimgrep_std_mt_tuned       xgrep=3.21  13.262s
+  done nodegrep_std_mt_tuned      xgrep=6.46  27.637s
+  done ocgrep_std_mt_tuned        xgrep=1.40  10.187s
+  done odingrep_std_mt_tuned      xgrep=2.90  13.920s
+  done perlgrep_std               xgrep=6.19  9.976s
+  done ponygrep_std_mt_tuned      xgrep=2.72  15.471s
+  done pygrep_std_mt_tuned        xgrep=5.99  12.504s
+  done pypygrep_std               xgrep=11.32  15.586s
+  done rakugrep_std               xgrep=346.18  327.894s
+  done redgrep_std                xgrep=705.99  401.925s
+  done rubygrep_std               xgrep=7.99  11.625s
+  done scalagrep_std              xgrep=9.79  15.718s
+  done swiftgrep_std_mt_tuned     xgrep=2.60  11.296s
+  done wasmgrep_std               xgrep=7.78  12.424s
+  done zgrep_std_mt               xgrep=0.50  4.421s
+  done csgrep_aot_std_mt_tuned    xgrep=4.93  24.243s
 
 IMPL                           xgrep  startup     repos     secs  notes
 --------------------------------------------------------------------------------------
-asmgrep                        0.17x    0.2ms       6/6   2.506s  
-cgrep                          0.19x    0.5ms       6/6   2.472s  
-zgrep                          0.20x    0.4ms       6/6   2.452s  
-rustgrep                       0.40x    1.0ms       6/6   3.753s  
-zgrep_std_mt                   0.50x    1.6ms       6/6   4.288s  
-cgrep_std_mt                   0.54x    0.7ms       6/6   4.846s  
-cppgrep_std_mt_tuned           0.62x    1.3ms       6/6   5.139s  
-gogrep_mt                      0.71x    1.2ms       6/6   5.762s  
-ljgrep_std_mt_tuned            0.88x    2.1ms       6/6   7.892s  
-fortgrep_std_mt_tuned          1.10x    0.9ms       5/6   2.682s   ≠grep:jdk
-graalgrep_std_mt_tuned         1.36x    2.2ms       6/6   9.717s  
-ocgrep_std_mt_tuned            1.39x    1.0ms       6/6   9.923s  
-clgrep_std_mt_tuned            1.43x    3.7ms       4/6   8.589s   ≠grep:onyx ≠grep:immich
-adagrep_std_mt_tuned           2.13x    1.0ms       4/6   4.016s   ≠grep:immich ≠grep:jdk
-fpgrep_std_mt_tuned            2.40x    1.2ms       6/6  18.441s  
-swiftgrep_std_mt_tuned         2.54x    2.5ms       6/6  10.650s  
-ponygrep_std_mt_tuned          2.55x    5.3ms       6/6  16.090s  
-dgrep_std_mt_tuned             2.70x    1.0ms       6/6  10.867s  
-odingrep_std_mt_tuned          2.95x    2.6ms       6/6  13.612s  
-chplgrep_std_mt_tuned          3.02x   16.1ms       6/6  15.099s  
-crgrep_std_mt_tuned            3.04x    4.0ms       6/6  11.337s  
-nimgrep_std_mt_tuned           3.24x    0.8ms       6/6  12.853s  
-bungrep_std_mt_tuned           4.69x   38.2ms       6/6  24.021s  
-csgrep_aot_std_mt_tuned        4.81x    1.4ms       6/6  23.196s  
-gogrep                         5.07x    1.1ms       6/6   9.964s  
-codongrep_std                  5.67x    5.1ms       6/6  22.047s  
-pygrep_std_mt_tuned            6.11x   26.0ms       6/6  12.313s  
-perlgrep_std                   6.15x    4.3ms       6/6   9.641s  
-cljgraalgrep_std_mt_tuned      6.55x    2.3ms       6/6  12.809s  
-nodegrep_std_mt_tuned          6.62x   66.1ms       6/6   9.750s  
-haskgrep_std_mt_tuned          6.91x   15.2ms       6/6  76.647s  
-wasmgrep_std                   7.68x   12.7ms       6/6  11.880s  
-rubygrep_std                   7.93x   42.0ms       6/6  11.160s  
-ijsgrep_std                    8.80x   46.7ms       5/6   9.796s   ≠grep:immich
-scalagrep_std                  9.82x    1.8ms       6/6  15.276s  
-jgrep_std_mt_tuned            10.31x   32.4ms       6/6  21.475s  
-dartgrep_std                  10.81x    2.3ms       6/6  17.474s  
-pypygrep_std                  11.36x   47.8ms       6/6  15.213s  
-ktgrep_std_mt_tuned           11.90x   41.8ms       6/6  28.403s  
-dyalogrep_std                 20.19x  285.1ms       6/6  24.736s  
-denogrep_std_mt_tuned         21.67x   69.4ms       6/6  62.151s  
-cljgrep_std_mt_tuned          23.68x  404.4ms       6/6  28.694s  
-awkgrep_std                   24.01x    2.4ms       6/6  34.997s  
-jlgrep_std_mt_tuned           28.19x  593.7ms       6/6  35.322s  
-exgrep_std_mt_tuned           35.29x  415.2ms       6/6  44.054s  
-bashgrep_std                 175.83x    2.7ms       6/6 248.532s  
-rakugrep_std                 343.30x  387.9ms       3/6 352.913s   ≠grep:navidrome ≠grep:immich slow:jdk(+skipped larger)
-redgrep_std                  727.69x   17.4ms       5/6 401.633s   slow:jdk(+skipped larger)
+asmgrep                        0.19x    0.2ms       6/6   2.607s  
+cgrep                          0.20x    0.6ms       6/6   2.633s  
+zgrep                          0.21x    0.5ms       6/6   2.569s  
+rustgrep                       0.39x    0.9ms       6/6   3.793s  
+zgrep_std_mt                   0.50x    1.7ms       6/6   4.421s  
+cgrep_std_mt                   0.57x    0.7ms       6/6   5.075s  
+cppgrep_std_mt_tuned           0.61x    1.3ms       6/6   5.280s  
+gogrep_mt                      0.68x    1.1ms       6/6   5.729s  
+ljgrep_std_mt_tuned            0.87x    2.1ms       6/6   8.070s  
+fortgrep_std_mt_tuned          1.08x    1.1ms       6/6   8.457s  
+clgrep_std_mt_tuned            1.35x    3.7ms       6/6   9.435s  
+graalgrep_std_mt_tuned         1.36x    2.5ms       6/6  10.090s  
+ocgrep_std_mt_tuned            1.40x    1.0ms       6/6  10.187s  
+adagrep_std_mt_tuned           2.22x    0.9ms       6/6  17.230s  
+fpgrep_std_mt_tuned            2.39x    1.2ms       6/6  18.929s  
+swiftgrep_std_mt_tuned         2.60x    2.6ms       6/6  11.296s  
+ponygrep_std_mt_tuned          2.72x    5.4ms       6/6  15.471s  
+dgrep_std_mt_tuned             2.77x    1.0ms       6/6  11.328s  
+odingrep_std_mt_tuned          2.90x    2.6ms       6/6  13.920s  
+crgrep_std_mt_tuned            3.06x    3.9ms       6/6  11.819s  
+chplgrep_std_mt_tuned          3.09x   23.1ms       6/6  15.754s  
+nimgrep_std_mt_tuned           3.21x    0.9ms       6/6  13.262s  
+bungrep_std_mt_tuned           4.63x   39.4ms       6/6  23.828s  
+csgrep_aot_std_mt_tuned        4.93x    1.5ms       6/6  24.243s  
+gogrep                         5.17x    1.1ms       6/6  25.579s  
+codongrep_std                  5.84x    5.1ms       6/6  22.880s  
+pygrep_std_mt_tuned            5.99x   26.6ms       6/6  12.504s  
+perlgrep_std                   6.19x    4.3ms       6/6   9.976s  
+cljgraalgrep_std_mt_tuned      6.45x    2.5ms       6/6  12.943s  
+nodegrep_std_mt_tuned          6.46x   67.5ms       6/6  27.637s  
+haskgrep_std_mt_tuned          6.69x   15.3ms       6/6  77.496s  
+wasmgrep_std                   7.78x   12.0ms       6/6  12.424s  
+rubygrep_std                   7.99x   42.4ms       6/6  11.625s  
+ijsgrep_std                    8.78x   47.9ms       6/6  12.578s  
+scalagrep_std                  9.79x    1.8ms       6/6  15.718s  
+jgrep_std_mt_tuned             9.94x   32.6ms       6/6  22.140s  
+dartgrep_std                  10.68x    2.3ms       6/6  17.786s  
+pypygrep_std                  11.32x   48.2ms       6/6  15.586s  
+ktgrep_std_mt_tuned           11.60x   42.0ms       6/6  28.542s  
+dyalogrep_std                 19.87x  283.8ms       6/6  24.945s  
+denogrep_std_mt_tuned         20.89x   69.8ms       6/6  57.745s  
+cljgrep_std_mt_tuned          23.04x  405.9ms       6/6  28.836s  
+awkgrep_std                   23.80x    2.4ms       6/6  36.109s  
+jlgrep_std_mt_tuned           27.80x  603.3ms       6/6  35.777s  
+exgrep_std_mt_tuned           34.65x  417.2ms       6/6  44.558s  
+bashgrep_std                 170.50x    2.7ms       6/6 248.336s  
+rakugrep_std                 346.18x  426.9ms       6/6 327.894s  
+redgrep_std                  705.99x   17.8ms       5/6 401.925s   slow:jdk(+skipped larger)
 --------------------------------------------------------------------------------------
 pattern=error  corpus=6 repos  timeout=300s  baseline=GNU grep (-rIiF)
-grep baseline (ms): camilladsp=2.633 jellyfin=26.414 navidrome=14.682 onyx=26.133 immich=45.597 jdk=849.237 
-TOTAL WALL-CLOCK: 1769.173 s  (29.5 min)
+grep baseline (ms): camilladsp=2.691 jellyfin=27.180 navidrome=15.385 onyx=27.174 immich=46.654 jdk=872.206 
+TOTAL WALL-CLOCK: 1800.445 s  (30.0 min)
 ×grep = geomean(mean_impl/mean_grep) over completed repos; <1 = faster than grep. See docs/BENCHMARKING.md
