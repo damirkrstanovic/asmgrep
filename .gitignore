@@ -45,6 +45,10 @@
 # Erlang/BEAM crash dumps
 erl_crash.dump
 
+# Dyalog APL crash dumps
+aplcore
+aplcore.*
+
 # editor / OS
 *~
 .DS_Store
