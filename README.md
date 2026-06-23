@@ -31,8 +31,15 @@ Exit status: `0` = match, `1` = no match, `2` = error.
 
 > ### 🏁 [**The complete leaderboard → docs/LEADERBOARD.md**](docs/LEADERBOARD.md)
 > All **48 implementations** ranked on one harness against a pinned public corpus (6 repos). Nine beat
-> GNU grep; the spread top-to-bottom is ~4,300×, sorted almost entirely by *runtime model, not language*.
+> GNU grep; the spread top-to-bottom is ~3,900×, sorted almost entirely by *runtime model, not language*.
 > The tables below are excerpts.
+
+![Leaderboard — 48 implementations vs GNU grep (×grep, log scale) with ±1σ error bars; fastest at top](docs/leaderboard.png)
+
+*×grep = geomean of mean(impl)/mean(grep) over the corpus (<1 = faster than grep). Whiskers are the
+**±1σ** propagated from hyperfine's per-measurement stddev — where two bars' whiskers overlap, the
+ordering between them isn't statistically meaningful (e.g. the top trio **asm / C / Zig are a tie**).
+Regenerate with `python3 tests/plot_leaderboard.py`.*
 
 ## Findings
 
