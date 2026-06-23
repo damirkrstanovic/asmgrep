@@ -284,13 +284,19 @@ $(BIN)/ijsgrep_std: j/grep_std.ijs | $(BIN)
 
 # Dyalog APL (dyalogscript): the canonical APL, and a STABLE one -- unlike the
 # machine's broken gnu-apl build (GNU APL attempted+abandoned, see RESULTS.md). Native ⍷
-# (Find) is C-backed (fast scan, like J's E.), but ~313 ms interpreter boot makes
+# (Find) is C-backed (fast scan, like J's E.), but ~280 ms interpreter boot makes
 # it startup-bound (Raku/Julia class). Byte-exact via ⎕NREAD/⎕NAPPEND type 80 +
 # ⎕UCS. dyalogscript stdout is a non-seekable pipe, so the launcher injects a temp
 # file the script writes into, then cats it (exit code via ⎕OFF). _std only.
+# ENABLE_CEF=0: Dyalog 19 on Linux boots a full CEF/Chromium process tree at
+# interpreter startup (for the HTMLRenderer GUI) even for a headless script that
+# never touches a GUI. CEF's multiprocess shutdown sporadically races and orphans
+# detached Chromium helpers -- one such hang stalled a benchmark run for 7.5 h.
+# The grep is byte-identical without it, so disable CEF outright (no spawn, no
+# zombies, faster boot). Verified: 0 chromium procs, output unchanged.
 dyalog: $(BIN)/dyalogrep_std
 $(BIN)/dyalogrep_std: dyalog/grep_std.apls | $(BIN)
-	printf '#!/bin/sh\nout="$$(mktemp)"\ndyalogscript $(CURDIR)/dyalog/grep_std.apls "$$out" "$$@" 2>/dev/null\nrc=$$?\ncat "$$out"\nrm -f "$$out"\nexit "$$rc"\n' > $@ && chmod +x $@
+	printf '#!/bin/sh\nexport ENABLE_CEF=0\nout="$$(mktemp)"\ndyalogscript $(CURDIR)/dyalog/grep_std.apls "$$out" "$$@" 2>/dev/null\nrc=$$?\ncat "$$out"\nrm -f "$$out"\nexit "$$rc"\n' > $@ && chmod +x $@
 
 # ----------------------------------------------------------------------------
 # Hosted / JVM languages: compile to bytecode, run via `java`. A tiny launcher
