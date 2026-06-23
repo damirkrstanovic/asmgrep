@@ -112,8 +112,11 @@ for b in "${BINLIST[@]}"; do
     if [ "$ic" != "$gc" ]; then notes+=" ≠grep:$repo"; continue; fi
     probe=$(elapsed "$p0" "$p1")
     if python3 -c "import sys;sys.exit(0 if $probe < $HFAST else 1)"; then
-      # fast → hyperfine for precision
-      hyperfine --warmup 1 -M 5 -N --ignore-failure "$BIN/$b -r -i $PAT $dir" --export-json /tmp/_lbi.json >/dev/null 2>&1
+      # fast → hyperfine for precision. MUST be timeout-wrapped: an impl that
+      # hangs here (e.g. Dyalog sporadically spawning a Chromium HTMLRenderer
+      # that never exits) would otherwise block the whole run indefinitely —
+      # the probe run above is bounded, but hyperfine was not.
+      timeout -k 10 "$TIMEOUT" hyperfine --warmup 1 -M 5 -N --ignore-failure "$BIN/$b -r -i $PAT $dir" --export-json /tmp/_lbi.json >/dev/null 2>&1
       im=$(python3 -c "import json;print('%.3f'%(json.load(open('/tmp/_lbi.json'))['results'][0]['mean']*1000))" 2>/dev/null)
     else
       # slow → use the single bounded run we already paid for
@@ -127,6 +130,11 @@ for b in "${BINLIST[@]}"; do
   su=""
   [ -n "$SMALLFILE" ] && { timeout -k 5 60 hyperfine --warmup 2 -M 8 -N --ignore-failure "$BIN/$b -r $PAT $SMALLFILE" --export-json /tmp/_lbs.json >/dev/null 2>&1 \
        && su=$(python3 -c "import json;print('%.1f'%(json.load(open('/tmp/_lbs.json'))['results'][0]['mean']*1000))" 2>/dev/null); }
+  # Reap stragglers this impl left detached so they can't contend with the next
+  # impl's timing. Dyalog forks Chromium HTMLRenderer daemons (under /opt/mdyalog)
+  # that survive `timeout`'s child-kill; targeted so nothing else is affected.
+  pkill -9 -f "/opt/mdyalog" 2>/dev/null
+  pkill -9 -f "grep_std.apls" 2>/dev/null
   bt1=$(now); IMPL_SECS[$b]=$(elapsed "$bt0" "$bt1")
   if [ "$n" -gt 0 ]; then
     xg=$(python3 -c "import math;print('%.2f'%math.exp($logsum/$n))")
