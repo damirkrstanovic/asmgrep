@@ -127,10 +127,15 @@ so read the **ordering**, not the absolute multiplier across tables; full method
 Same lesson, three ways. **J** (array language) lands among the natives because its scan primitive is C,
 while **Forth** is the floor because its scan is interpreted byte compares — *same "interpreted language"
 label, opposite result*, decided only by whether the hot loop bottoms out in C. And **Dyalog APL** sharpens
-it inside the array family: its `⍷` scan is C-backed and fast *like J's*, yet a 313 ms interpreter boot
-drops it into the startup-bound tier — two array languages, same fast scan, sorted apart by startup model
-alone. (GNU APL was also attempted but couldn't pass the harness on this machine's broken `gnu-apl 1.9-1`
-build, so **J** and **Dyalog** are the array-language representatives. See RESULTS.md for the post-mortem.)
+it inside the array family: its `⍷` scan is C-backed and fast *like J's*, yet its interpreter boot dropped
+it into the startup-bound tier — two array languages, same fast scan, sorted apart by startup model alone.
+(*Update:* most of that "313 ms boot" turned out to be **Dyalog 19 spawning a CEF/Chromium HTMLRenderer at
+startup** even for a headless script — disabling it with `ENABLE_CEF=0` cuts startup to **~51 ms**, output
+byte-identical, and on the pinned corpus Dyalog improves to **13.5×**. So the boot tax was real but largely
+a GUI artifact, not inherent interpreter cost — Dyalog sits closer to J than the 313 ms framing implied.
+See [docs/LEADERBOARD.md](docs/LEADERBOARD.md) and RESULTS.md.) GNU APL was also attempted but couldn't pass
+the harness on this machine's broken `gnu-apl 1.9-1` build, so **J** and **Dyalog** are the array-language
+representatives.
 
 The twenty-five before them (consistent single-pass benchmark, see RESULTS.md) likewise sort by
 **runtime model**, not syntax:
@@ -172,7 +177,7 @@ The twenty-five before them (consistent single-pass benchmark, see RESULTS.md) l
 | **Scala-Native** (LLVM AOT, off-JVM) | the same Scala you'd run on the JVM, AOT-compiled via LLVM — **2.0 ms** startup, no JVM, no JIT-warmup. Pairs against a hypothetical JVM-Scala the way **GraalVM-native pairs against JVM-Java**: the loop-closer removes the startup tax outright. ~10× grep, scan-bound single-threaded |
 | **Rust→WASI** (`wasm32-wasip1` + wasmtime) | native Rust compiled to wasm, run sandboxed under wasmtime. WASI is **capability-sandboxed**, so the launcher must preopen host root (`--dir /::/`) for the guest's `std::fs`. ~14 ms startup, ~9.8× grep — the delta over native Rust is the wasm sandbox + syscall-shim tax, an honest measure of "portable sandboxed native" |
 | **J** (jsoftware, array language) | the surprise: an *interpreted* array language that lands in the **native cluster** (~8.6× grep, 0.17 s on the 36 MB tree). `needle E. haystack` (find) and the whole-file read are **compiled C primitives**, so the only hot work isn't interpreted at all. ~54 ms startup. `_std` only; symlinks not skipped in the walk (no portable `lstat` foreign) — invisible to the symlink-free harness |
-| **Dyalog APL** (dyalogscript) | the canonical APL — and, unlike the machine's broken `gnu-apl` build, a **rock-solid** one (16/16, deterministic). Same scan story as J: native `⍷` (Find) is a C primitive, so the scan is fast — but a **~313 ms interpreter boot** makes it startup-bound (Raku/Julia class), the clean within-family proof that startup, not the scan, decides placement. Mature byte-exact I/O: `⎕NREAD`/`⎕NAPPEND` type 80 + `⎕UCS` (unsigned 0–255, NUL-safe), `⎕NINFO⍠('Wildcard' 1)('Follow' 0)` for a symlink-skipping walk, `⎕OFF n` for exit codes. dyalogscript's stdout is a non-seekable pipe, so the launcher injects a temp file the script `⎕NAPPEND`s into, then cats it. `_std` only |
+| **Dyalog APL** (dyalogscript) | the canonical APL — and, unlike the machine's broken `gnu-apl` build, a **rock-solid** one (16/16, deterministic). Same scan story as J: native `⍷` (Find) is a C primitive, so the scan is fast — but a large **interpreter boot** dropped it into the startup-bound tier. *(That boot was mostly **Dyalog 19 launching a CEF/Chromium HTMLRenderer at startup** even headless; `ENABLE_CEF=0` cuts it 313 ms → ~51 ms with identical output, so the boot tax was largely a GUI artifact — see docs/LEADERBOARD.md.)* Mature byte-exact I/O: `⎕NREAD`/`⎕NAPPEND` type 80 + `⎕UCS` (unsigned 0–255, NUL-safe), `⎕NINFO⍠('Wildcard' 1)('Follow' 0)` for a symlink-skipping walk, `⎕OFF n` for exit codes. dyalogscript's stdout is a non-seekable pipe, so the launcher injects a temp file the script `⎕NAPPEND`s into, then cats it. `_std` only |
 | **Forth** (gforth 0.7.3, stack language) | the **bottom of the board** and the perfect foil to J: a hand-written **byte-at-a-time `c@` scan** (no library search, no SIMD) takes **>120 s** to scan the 36 MB tree (>6000× grep) — yet startup is **6 ms**. Same "interpreted language" label as J, opposite result: J's scan is C, Forth's is the interpreter doing manual byte compares. Notable gforth lore: `N (bye)` for exit codes (plain `bye` only exits 0), `next-arg` (not the garbage `argc`) for args, and `?do` *not* short-circuiting inverted ranges (a 64 KB runaway trap). `_std` only (no concurrency primitive) |
 
 ### 1. The language barely matters — the *runtime model* is everything

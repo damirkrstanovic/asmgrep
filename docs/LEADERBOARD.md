@@ -67,7 +67,7 @@ passed the correctness gate.
 | 37 | **Dart** | std | 10.68× | 2.3 ms | 6/6 | native self-contained exe |
 | 38 | **PyPy** | std | 11.32× | 48.2 ms | 6/6 | the unchanged CPython source under a tracing JIT |
 | 39 | **Kotlin** | tuned, MT | 11.60× | 42.0 ms | 6/6 | JVM — startup-bound |
-| 40 | **Dyalog APL** | std | 19.87×† | 283.8 ms† | 6/6 | canonical APL; C-backed `⍷` scan but **startup-bound** |
+| 40 | **Dyalog APL** | std | 13.47× | 51.2 ms | 6/6 | canonical APL; C-backed `⍷` scan but **startup-bound** |
 | 41 | **Deno** | tuned, MT | 20.89× | 69.8 ms | 6/6 | JS/TS runtime (V8) |
 | 42 | **Clojure** | tuned, MT | 23.04× | 405.9 ms | 6/6 | JVM AOT — startup-bound |
 | 43 | **awk** | std | 23.80× | 2.4 ms | 6/6 | interpreted (gawk) |
@@ -78,10 +78,11 @@ passed the correctness gate.
 | 48 | **Red** | std | 705.99× | 17.8 ms | 5/6 | Rebol-family, interpreted — `slow:jdk` (exceeds 300 s) |
 | – | **Forth** | std | **DNF** | 6.0 ms | 0/6 | gforth; interpreted byte-at-a-time scan exceeds the 300 s gate on every repo (excluded from the timed run; the bottom of the board) |
 
-**† Dyalog caveat:** this row predates the `ENABLE_CEF=0` fix. Dyalog 19 on Linux was booting a CEF/Chromium
-process tree at startup (for its HTMLRenderer GUI) even for this headless script; disabling it cut startup
-**283.8 ms → ~53 ms** with byte-identical output. Dyalog is startup-bound, so its real `×grep` is now far
-better than 19.87× — it will be re-measured on the next full run.
+**Dyalog note:** Dyalog 19 on Linux was booting a CEF/Chromium process tree at startup (for its
+HTMLRenderer GUI) even for this headless script — the launcher now sets `ENABLE_CEF=0`, which cut startup
+**283.8 ms → 51 ms** (and removed a sporadic Chromium-zombie hang) with byte-identical output. Dyalog's row
+above is **re-measured with that fix** (same harness, single-impl run, 2026-06-23): ×grep 19.87 → 13.47.
+The other 47 rows are from the single 30-min run.
 
 **Variant suffixes:** `std` = idiomatic single-pass; `MT` = +threads; `tuned` = +buffer-reuse / chunking.
 A language ships only `std` when its runtime offers no idiomatic shared-memory parallelism (interpreters

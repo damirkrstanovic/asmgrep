@@ -31,7 +31,7 @@
   done dartgrep_std               xgrep=10.68  17.786s
   done denogrep_std_mt_tuned      xgrep=20.89  57.745s
   done dgrep_std_mt_tuned         xgrep=2.77  11.328s
-  done dyalogrep_std              xgrep=19.87  24.945s
+  done dyalogrep_std              xgrep=13.47  17.182s  (re-measured ENABLE_CEF=0)
   done exgrep_std_mt_tuned        xgrep=34.65  44.558s
   done fortgrep_std_mt_tuned      xgrep=1.08  8.457s
   done fpgrep_std_mt_tuned        xgrep=2.39  18.929s
@@ -100,7 +100,7 @@ jgrep_std_mt_tuned             9.94x   32.6ms       6/6  22.140s
 dartgrep_std                  10.68x    2.3ms       6/6  17.786s  
 pypygrep_std                  11.32x   48.2ms       6/6  15.586s  
 ktgrep_std_mt_tuned           11.60x   42.0ms       6/6  28.542s  
-dyalogrep_std                 19.87x  283.8ms       6/6  24.945s  
+dyalogrep_std                 13.47x   51.2ms       6/6  17.182s   re-measured 2026-06-23 (ENABLE_CEF=0; was 19.87x/283.8ms with CEF)
 denogrep_std_mt_tuned         20.89x   69.8ms       6/6  57.745s  
 cljgrep_std_mt_tuned          23.04x  405.9ms       6/6  28.836s  
 awkgrep_std                   23.80x    2.4ms       6/6  36.109s  
